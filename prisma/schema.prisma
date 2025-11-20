@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  storeName String?
+  storeUrl  String?
+  placeId   String?
+  reviews   Review[]
+  createdAt DateTime @default(now())
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id]) // ✅ 여기서 관계 설정
+  platform  String // Naver / Kakao / Google
+  rating    Int
+  content   String
+  rawJson   Json?
+  summary   Summary?
+  reply     Reply?
+  createdAt DateTime @default(now())
+}
+
+model Summary {
+  id        String   @id @default(cuid())
+  reviewId  String   @unique
+  review    Review   @relation(fields: [reviewId], references: [id]) // ✅ Review와 1:1
+  positives String[]
+  negatives String[]
+  insights  String[]
+  tags      String[]
+  createdAt DateTime @default(now())
+}
+
+model Reply {
+  id        String   @id @default(cuid())
+  reviewId  String   @unique
+  review    Review   @relation(fields: [reviewId], references: [id]) // ✅ Review와 1:1
+  tone      String
+  content   String
+  createdAt DateTime @default(now())
+}
