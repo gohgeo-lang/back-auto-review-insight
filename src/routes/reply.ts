@@ -1,29 +1,12 @@
 import { Router } from "express";
-import { prisma } from "../lib/prisma";
+import { saveReply, getReply } from "../controllers/replycontroller";
 
 const router = Router();
 
-// 응대문 저장
-router.post("/", async (req, res) => {
-  const { reviewId, content, tone } = req.body;
+// 응대문 생성/업데이트
+router.post("/", saveReply);
 
-  if (!reviewId || !content)
-    return res.status(400).json({ error: "reviewId, content 필요" });
-
-  const reply = await prisma.reply.upsert({
-    where: { reviewId },
-    update: { content, tone },
-    create: { reviewId, content, tone },
-  });
-
-  res.json(reply);
-});
-
-// 응대문 조회
-router.get("/:reviewId", async (req, res) => {
-  const { reviewId } = req.params;
-  const reply = await prisma.reply.findUnique({ where: { reviewId } });
-  res.json(reply);
-});
+// 특정 리뷰의 응대문 조회
+router.get("/:reviewId", getReply);
 
 export default router;

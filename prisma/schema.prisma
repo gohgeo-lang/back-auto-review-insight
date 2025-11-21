@@ -34,7 +34,7 @@ model Review {
 model Summary {
   id        String   @id @default(cuid())
   reviewId  String   @unique
-  review    Review   @relation(fields: [reviewId], references: [id]) // ✅ Review와 1:1
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   positives String[]
   negatives String[]
   insights  String[]
@@ -45,7 +45,7 @@ model Summary {
 model Reply {
   id        String   @id @default(cuid())
   reviewId  String   @unique
-  review    Review   @relation(fields: [reviewId], references: [id]) // ✅ Review와 1:1
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   tone      String
   content   String
   createdAt DateTime @default(now())

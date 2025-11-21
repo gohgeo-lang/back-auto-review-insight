@@ -1,8 +1,11 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { prisma } from "../lib/prisma";
-import { generateSummary } from "../ai/generateSummary";
+import { generateSummary } from "../controllers/aiController"; // 변경됨!
 
+/**
+ * 네이버 리뷰 수집 (PC 기준)
+ */
 export async function fetchNaverReviews(placeId: string, userId: string) {
   try {
     const url = `https://pcmap.place.naver.com/place/${placeId}/review/visitor?entry=pll`;
@@ -17,56 +20,79 @@ export async function fetchNaverReviews(placeId: string, userId: string) {
     const $ = cheerio.load(html.data);
     const reviews: any[] = [];
 
-    $(".EvB_Z .zPfVt").each((_, el) => {
-      const content = $(el).text().trim();
-      if (content.length === 0) return;
+    /**
+     * 🎯 새 selector
+     * 네이버 PC 플레이스 방문자 리뷰는 아래 구조가 가장 안정적임
+     *
+     * div#_review_section > script 태그 내 JSON 데이터 포함됨
+     * → HTML 파싱 대신 JSON 파싱 방식 사용 (가장 안정적)
+     */
 
-      const ratingEl = $(el)
-        .closest(".EvB_Z")
-        .find(".hzzSN span[class*='PlaceReviewScore']")
-        .text()
-        .trim();
+    const dataScript = $("script#_review_data");
+    if (!dataScript.length) {
+      console.log("⚠️ 리뷰 데이터 스크립트를 찾을 수 없음.");
+      return 0;
+    }
 
-      const rating = Number(ratingEl) || 0;
-      const date = $(el).closest(".EvB_Z").find(".time").text().trim();
+    // 스크립트 내부 JSON 파싱
+    const json = JSON.parse(dataScript.html() || "{}");
 
+    const items = json?.items ?? [];
+    if (!items.length) {
+      console.log("⚠️ 리뷰 데이터 없음");
+      return 0;
+    }
+
+    for (const item of items) {
       reviews.push({
+        reviewId: item.reviewId,
+        content: item.reviewContent,
+        rating: item.rating ?? 0,
+        date: item.regTime ?? "",
         platform: "Naver",
-        rating,
-        content,
-        date,
       });
-    });
+    }
 
+    // ================================
+    // DB 저장 + summary 자동 생성
+    // ================================
     let added = 0;
 
-    // DB 저장 파트
     for (const r of reviews) {
+      // 리뷰 ID 기반 중복 체크 (content보다 훨씬 안전)
       const exists = await prisma.review.findFirst({
-        where: {
-          userId,
-          content: r.content, // 중복 방지 기준
-        },
+        where: { userId, rawJson: { path: ["naverId"], equals: r.reviewId } },
       });
 
-      // 이미 있으면 skip
       if (exists) continue;
 
-      // 신규 리뷰 저장
+      // 신규 저장
       const newReview = await prisma.review.create({
         data: {
           userId,
-          platform: r.platform,
+          platform: "Naver",
           rating: r.rating,
           content: r.content,
+          rawJson: { naverId: r.reviewId, date: r.date },
         },
       });
 
-      // 저장 직후 summary 자동 생성
+      // 요약 자동 생성
       try {
-        await generateSummary(newReview.id, newReview.content);
+        await generateSummary(
+          {
+            body: {
+              reviewId: newReview.id,
+              content: newReview.content,
+            },
+          } as any, // fake Request object
+          {
+            json: () => {},
+            status: () => ({ json: () => {} }),
+          } as any
+        ); // fake Response object
       } catch (e) {
-        console.error("요약 생성 실패:", e);
+        console.error("❌ 요약 생성 실패:", e);
       }
 
       added++;
@@ -74,7 +100,7 @@ export async function fetchNaverReviews(placeId: string, userId: string) {
 
     return added;
   } catch (err) {
-    console.error("Naver fetch error:", err);
+    console.error("❌ fetchNaverReviews Error:", err);
     return 0;
   }
 }

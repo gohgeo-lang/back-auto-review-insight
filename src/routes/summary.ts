@@ -1,16 +1,9 @@
 import { Router } from "express";
-import { prisma } from "../lib/prisma";
+import { getSummary } from "../controllers/summaryController";
 
 const router = Router();
 
-router.get("/:reviewId", async (req, res) => {
-  const { reviewId } = req.params;
-
-  const summary = await prisma.summary.findUnique({
-    where: { reviewId },
-  });
-
-  res.json(summary);
-});
+// 특정 리뷰의 요약 조회
+router.get("/:reviewId", getSummary);
 
 export default router;
