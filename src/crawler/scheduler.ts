@@ -1,4 +1,3 @@
-// crawler/scheduler.ts
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
 import { fetchNaverReviews } from "./naver";
@@ -25,18 +24,18 @@ cron.schedule("0 */3 * * *", async () => {
         const count = await fetchNaverReviews(user.placeId, user.id);
 
         console.log(
-          `✅ [Scheduler] 유저 ${user.id}: 새 리뷰 ${count}개 수집 완료`
+          `[Scheduler] 유저 ${user.id}: 새 리뷰 ${count}개 수집 완료`
         );
       } catch (err) {
         console.error(
-          `❌ [Scheduler] 유저 ${user.id} 리뷰 수집 중 오류 발생:`,
+          `[Scheduler] 유저 ${user.id} 리뷰 수집 중 오류 발생:`,
           err
         );
       }
     }
 
-    console.log("🎉 [Scheduler] 전체 리뷰 수집 작업 완료");
+    console.log("[Scheduler] 전체 리뷰 수집 작업 완료");
   } catch (err) {
-    console.error("❌ [Scheduler] 전체 작업 에러:", err);
+    console.error("[Scheduler] 전체 작업 에러:", err);
   }
 });

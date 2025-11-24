@@ -22,6 +22,7 @@ model Review {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id]) // ✅ 여기서 관계 설정
+  reviewId  String?
   platform  String // Naver / Kakao / Google
   rating    Int
   content   String

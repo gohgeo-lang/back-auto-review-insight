@@ -1,106 +1,232 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { prisma } from "../lib/prisma";
-import { generateSummary } from "../controllers/aiController"; // 변경됨!
+import { generateSummary } from "../controllers/aiController";
 
-/**
- * 네이버 리뷰 수집 (PC 기준)
- */
+// 랜덤 딜레이
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function randomDelay() {
+  return 1200 + Math.random() * 1200;
+}
+
+/** -------------------------
+ *  MAIN ENTRY FUNCTION
+ --------------------------*/
 export async function fetchNaverReviews(placeId: string, userId: string) {
   try {
-    const url = `https://pcmap.place.naver.com/place/${placeId}/review/visitor?entry=pll`;
+    // 1) 내부 API (가장 안정적)
+    const apiReviews = await tryInternalApi(placeId);
+    if (apiReviews.length > 0) return await saveReviews(apiReviews, userId);
+
+    // 2) 모바일 script JSON 파싱
+    const mobReviews = await tryMobileScript(placeId);
+    if (mobReviews.length > 0) return await saveReviews(mobReviews, userId);
+
+    // 3) PC script JSON 파싱
+    const pcReviews = await tryPcScript(placeId);
+    if (pcReviews.length > 0) return await saveReviews(pcReviews, userId);
+
+    // 4) 마지막 fallback: 네가 만든 DOM 기반 파싱
+    const domReviews = await tryDomFallback(placeId);
+    if (domReviews.length > 0) return await saveReviews(domReviews, userId);
+
+    return 0;
+  } catch (err) {
+    console.error("❌ fetchNaverReviews ERROR:", err);
+    return 0;
+  }
+}
+
+/** ------------------------------------------
+ *  1) 내부 JSON API
+ -------------------------------------------*/
+async function tryInternalApi(placeId: string) {
+  try {
+    const url = `https://m.place.naver.com/restaurant/${placeId}/review/list?reviewSort=NEWEST&isPhoto=false`;
+
+    const res = await axios.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    });
+
+    const items = res.data?.list || [];
+    return items.map((i: any) => ({
+      reviewId: i.reviewId,
+      content: i.contents,
+      rating: i.rating,
+      date: i.regTime,
+      platform: "Naver",
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+/** ------------------------------------------
+ *  2) 모바일 HTML script JSON 파싱
+ -------------------------------------------*/
+async function tryMobileScript(placeId: string) {
+  try {
+    const url = `https://m.place.naver.com/restaurant/${placeId}/review`;
+
+    const res = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    const $ = cheerio.load(res.data);
+    const script = $('script[id="_review_data"]').html();
+
+    if (!script) return [];
+
+    const json = JSON.parse(script);
+
+    return json.result.review.list.map((i: any) => ({
+      reviewId: i.reviewId,
+      content: i.contents,
+      rating: i.rating,
+      date: i.regTime,
+      platform: "Naver",
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+/** ------------------------------------------
+ *  3) PC HTML script JSON 파싱
+ -------------------------------------------*/
+async function tryPcScript(placeId: string) {
+  try {
+    const url = `https://place.naver.com/restaurant/${placeId}/review/visitor`;
+
+    const res = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    const $ = cheerio.load(res.data);
+
+    const scriptEl = $('script[type="application/json"]')
+      .toArray()
+      .find((el: any) => {
+        const html = $(el).html();
+        return html && html.includes("review");
+      });
+
+    const script = scriptEl ? $(scriptEl).html() : null;
+
+    if (!script) return [];
+
+    const json = JSON.parse(script);
+
+    const items =
+      json?.props?.pageProps?.dehydratedState?.queries?.[0]?.state?.data
+        ?.items || [];
+
+    return items.map((i: any) => ({
+      reviewId: i.reviewId,
+      content: i.contents,
+      rating: i.rating,
+      date: i.date,
+      platform: "Naver",
+    }));
+  } catch (_) {
+    return [];
+  }
+}
+
+/** ------------------------------------------
+ *  4) 마지막 fallback: 네가 만든 DOM 구조 파싱
+ *  (구조 변경 대비)
+ -------------------------------------------*/
+async function tryDomFallback(placeId: string) {
+  try {
+    const url = `https://m.place.naver.com/restaurant/${placeId}/review/visitor`;
 
     const html = await axios.get(url, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "User-Agent": "Mozilla/5.0",
+        Referer: `https://m.place.naver.com/restaurant/${placeId}/home`,
       },
     });
 
     const $ = cheerio.load(html.data);
     const reviews: any[] = [];
 
-    /**
-     * 🎯 새 selector
-     * 네이버 PC 플레이스 방문자 리뷰는 아래 구조가 가장 안정적임
-     *
-     * div#_review_section > script 태그 내 JSON 데이터 포함됨
-     * → HTML 파싱 대신 JSON 파싱 방식 사용 (가장 안정적)
-     */
+    $("li._3QDEe, li._1gpJH, li._2CVxW").each((_, el) => {
+      const content =
+        $(el).find("span.wo9IH").text().trim() ||
+        $(el).find("span._3whw5").text().trim();
 
-    const dataScript = $("script#_review_data");
-    if (!dataScript.length) {
-      console.log("⚠️ 리뷰 데이터 스크립트를 찾을 수 없음.");
-      return 0;
-    }
+      const ratingRaw = $(el).find("span._Xkcg").text().trim();
+      const rating = Number(ratingRaw) || 0;
 
-    // 스크립트 내부 JSON 파싱
-    const json = JSON.parse(dataScript.html() || "{}");
-
-    const items = json?.items ?? [];
-    if (!items.length) {
-      console.log("⚠️ 리뷰 데이터 없음");
-      return 0;
-    }
-
-    for (const item of items) {
-      reviews.push({
-        reviewId: item.reviewId,
-        content: item.reviewContent,
-        rating: item.rating ?? 0,
-        date: item.regTime ?? "",
-        platform: "Naver",
-      });
-    }
-
-    // ================================
-    // DB 저장 + summary 자동 생성
-    // ================================
-    let added = 0;
-
-    for (const r of reviews) {
-      // 리뷰 ID 기반 중복 체크 (content보다 훨씬 안전)
-      const exists = await prisma.review.findFirst({
-        where: { userId, rawJson: { path: ["naverId"], equals: r.reviewId } },
-      });
-
-      if (exists) continue;
-
-      // 신규 저장
-      const newReview = await prisma.review.create({
-        data: {
-          userId,
+      if (content)
+        reviews.push({
+          reviewId: null,
+          content,
+          rating,
+          date: null,
           platform: "Naver",
-          rating: r.rating,
-          content: r.content,
-          rawJson: { naverId: r.reviewId, date: r.date },
-        },
-      });
+        });
+    });
 
-      // 요약 자동 생성
-      try {
-        await generateSummary(
-          {
-            body: {
-              reviewId: newReview.id,
-              content: newReview.content,
-            },
-          } as any, // fake Request object
-          {
-            json: () => {},
-            status: () => ({ json: () => {} }),
-          } as any
-        ); // fake Response object
-      } catch (e) {
-        console.error("❌ 요약 생성 실패:", e);
-      }
+    return reviews;
+  } catch (_) {
+    return [];
+  }
+}
 
-      added++;
+/** ------------------------------------------
+ *  리뷰 저장 + 요약 생성
+ -------------------------------------------*/
+async function saveReviews(list: any[], userId: string) {
+  let added = 0;
+
+  for (const r of list) {
+    const exists = await prisma.review.findFirst({
+      where: {
+        userId,
+        ...(r.reviewId ? { reviewId: r.reviewId } : { content: r.content }),
+      },
+    });
+
+    if (exists) continue;
+
+    const newReview = await prisma.review.create({
+      data: {
+        userId,
+        reviewId: r.reviewId,
+        platform: "Naver",
+        rating: r.rating,
+        content: r.content,
+        createdAt: r.date ? new Date(r.date) : new Date(),
+      },
+    });
+
+    try {
+      await generateSummary(
+        {
+          body: {
+            reviewId: newReview.id,
+            content: newReview.content,
+          },
+        } as any,
+        {
+          json: () => {},
+          status: () => ({ json: () => {} }),
+        } as any
+      );
+    } catch (e) {
+      console.log("summary error:", e);
     }
 
-    return added;
-  } catch (err) {
-    console.error("❌ fetchNaverReviews Error:", err);
-    return 0;
+    added++;
+    await sleep(randomDelay());
   }
+
+  return added;
 }
