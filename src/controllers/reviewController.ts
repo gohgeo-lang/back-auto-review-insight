@@ -20,7 +20,7 @@ export const getReviews = async (req: Request, res: Response) => {
 export const getReview = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
-    const review = await prisma.review.findUnique({
+    const review = await prisma.review.findFirst({
       where: { id: req.params.id, userId },
       include: { summary: true, reply: true },
     });

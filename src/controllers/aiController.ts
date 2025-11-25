@@ -7,10 +7,20 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 export const generateSummary = async (req: Request, res: Response) => {
   try {
     const { reviewId, content } = req.body;
+    const userId = (req as any).user?.id;
 
-    if (!reviewId || !content) {
+    if (!userId || !reviewId) {
       return res.status(400).json({ error: "MISSING_FIELDS" });
     }
+
+    const review = await prisma.review.findFirst({
+      where: { id: reviewId, userId },
+    });
+
+    if (!review) {
+      return res.status(404).json({ error: "REVIEW_NOT_FOUND" });
+    }
+    const reviewContent = content || review.content;
 
     const prompt = `
 다음 리뷰 내용을 기반으로 긍정/부정/인사이트/tags를 JSON 형식으로 정리해줘.
@@ -24,7 +34,7 @@ export const generateSummary = async (req: Request, res: Response) => {
 }
 
 리뷰:
-${content}
+${reviewContent}
 `;
 
     const completion = await client.chat.completions.create({
@@ -66,8 +76,25 @@ ${content}
 export const generateReply = async (req: Request, res: Response) => {
   try {
     const { reviewId, content, tone } = req.body;
-    if (!content) {
+    const userId = (req as any).user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "UNAUTHORIZED" });
+    }
+
+    if (!reviewId && !content) {
       return res.status(400).json({ error: "MISSING_FIELDS" });
+    }
+
+    let targetContent = content || "";
+    if (reviewId) {
+      const review = await prisma.review.findFirst({
+        where: { id: reviewId, userId },
+      });
+      if (!review) {
+        return res.status(404).json({ error: "REVIEW_NOT_FOUND" });
+      }
+      targetContent = content || review.content;
     }
 
     const prompt = `
@@ -75,7 +102,7 @@ export const generateReply = async (req: Request, res: Response) => {
 길이는 200자 내외로.
 
 리뷰:
-${content}
+${targetContent}
 `;
 
     const completion = await client.chat.completions.create({

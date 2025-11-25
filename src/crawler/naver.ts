@@ -1,232 +1,167 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
+import puppeteer from "puppeteer";
 import { prisma } from "../lib/prisma";
-import { generateSummary } from "../controllers/aiController";
+import crypto from "crypto";
 
-// 랜덤 딜레이
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-function randomDelay() {
-  return 1200 + Math.random() * 1200;
-}
-
-/** -------------------------
- *  MAIN ENTRY FUNCTION
- --------------------------*/
+/**
+ * 네이버 플레이스에서 리뷰를 수집해 Prisma에 저장
+ * - 공식 API가 차단될 수 있어 실제 DOM을 통해 수집
+ * - reviewId가 노출되지 않는 경우가 있어 placeId+본문 일부로 surrogate key 생성
+ */
 export async function fetchNaverReviews(placeId: string, userId: string) {
-  try {
-    // 1) 내부 API (가장 안정적)
-    const apiReviews = await tryInternalApi(placeId);
-    if (apiReviews.length > 0) return await saveReviews(apiReviews, userId);
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+      "--window-size=1280,800",
+    ],
+  });
 
-    // 2) 모바일 script JSON 파싱
-    const mobReviews = await tryMobileScript(placeId);
-    if (mobReviews.length > 0) return await saveReviews(mobReviews, userId);
+  const page = await browser.newPage();
+  await page.setUserAgent(
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  );
 
-    // 3) PC script JSON 파싱
-    const pcReviews = await tryPcScript(placeId);
-    if (pcReviews.length > 0) return await saveReviews(pcReviews, userId);
+  await page.goto(`https://map.naver.com/p/entry/place/${placeId}`, {
+    waitUntil: "networkidle2",
+    timeout: 60000,
+  });
 
-    // 4) 마지막 fallback: 네가 만든 DOM 기반 파싱
-    const domReviews = await tryDomFallback(placeId);
-    if (domReviews.length > 0) return await saveReviews(domReviews, userId);
-
+  const iframeHandle = await page.waitForSelector("iframe#entryIframe", {
+    timeout: 30000,
+  });
+  const frame = await iframeHandle!.contentFrame();
+  if (!frame) {
+    await browser.close();
     return 0;
-  } catch (err) {
-    console.error("❌ fetchNaverReviews ERROR:", err);
-    return 0;
   }
-}
 
-/** ------------------------------------------
- *  1) 내부 JSON API
- -------------------------------------------*/
-async function tryInternalApi(placeId: string) {
-  try {
-    const url = `https://m.place.naver.com/restaurant/${placeId}/review/list?reviewSort=NEWEST&isPhoto=false`;
+  // 리뷰 탭 클릭
+  const reviewTab =
+    (await frame.$('a[role="tab"][href*="review"]')) ||
+    (await frame.$('a[aria-label*="리뷰"]')) ||
+    (await frame.$('button[aria-label*="리뷰"]'));
+  if (reviewTab) {
+    await reviewTab.click();
+    await frame.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
+  }
 
-    const res = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "X-Requested-With": "XMLHttpRequest",
-      },
+  // 리뷰 리스트 로드 대기
+  await frame.waitForSelector(
+    "section[aria-label*='리뷰'] ul li, ul.list_place_reviews li, div.place_section_content ul li",
+    { timeout: 30000 }
+  );
+
+  // 스크롤로 모든 리뷰 로딩
+  let prev = 0;
+  while (true) {
+    const height = await frame.evaluate(() => document.body.scrollHeight);
+    if (height === prev) break;
+    prev = height;
+    await frame.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise((r) => setTimeout(r, 1300));
+  }
+
+  // 리뷰 추출
+  const reviews = await frame.evaluate(() => {
+    const result: { content: string; author?: string }[] = [];
+    const listItems = document.querySelectorAll(
+      "section[aria-label*='리뷰'] ul li, ul.list_place_reviews li, li.place_section_content__item, li.place_apply_pui, li[data-testid*='review']"
+    );
+
+    listItems.forEach((li) => {
+      const contentEl = li.querySelector(".pui__vn15t2") || li.querySelector("[class*='pui__vn15t2']");
+      const content = contentEl?.textContent?.trim();
+      if (!content) return;
+
+      const authorEl =
+        li.querySelector("a[href*='profile']") ||
+        li.querySelector("[data-testid*='nick']") ||
+        li.querySelector("span[class*='nickname']") ||
+        li.querySelector("strong");
+      const author = authorEl?.textContent?.trim() || undefined;
+
+      result.push({ content, author });
     });
 
-    const items = res.data?.list || [];
-    return items.map((i: any) => ({
-      reviewId: i.reviewId,
-      content: i.contents,
-      rating: i.rating,
-      date: i.regTime,
-      platform: "Naver",
-    }));
-  } catch (_) {
-    return [];
-  }
-}
+    return result;
+  });
 
-/** ------------------------------------------
- *  2) 모바일 HTML script JSON 파싱
- -------------------------------------------*/
-async function tryMobileScript(placeId: string) {
-  try {
-    const url = `https://m.place.naver.com/restaurant/${placeId}/review`;
+  await browser.close();
 
-    const res = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
+  // Prisma에 저장/업데이트
+  let newCount = 0;
+  for (const item of reviews) {
+    const content = cleanReviewText(item.content);
+    if (!content) continue;
+    const author = item.author?.trim();
+    const reviewId = makeReviewId(placeId, `${author || ""}-${content}`); // surrogate key
+
+    const existing = await prisma.review.findFirst({
+      where: { userId, reviewId },
     });
 
-    const $ = cheerio.load(res.data);
-    const script = $('script[id="_review_data"]').html();
-
-    if (!script) return [];
-
-    const json = JSON.parse(script);
-
-    return json.result.review.list.map((i: any) => ({
-      reviewId: i.reviewId,
-      content: i.contents,
-      rating: i.rating,
-      date: i.regTime,
-      platform: "Naver",
-    }));
-  } catch (_) {
-    return [];
-  }
-}
-
-/** ------------------------------------------
- *  3) PC HTML script JSON 파싱
- -------------------------------------------*/
-async function tryPcScript(placeId: string) {
-  try {
-    const url = `https://place.naver.com/restaurant/${placeId}/review/visitor`;
-
-    const res = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
-
-    const $ = cheerio.load(res.data);
-
-    const scriptEl = $('script[type="application/json"]')
-      .toArray()
-      .find((el: any) => {
-        const html = $(el).html();
-        return html && html.includes("review");
+    if (existing) {
+      await prisma.review.update({
+        where: { id: existing.id },
+        data: { content: formatDisplayContent(author, content), platform: "Naver" },
       });
-
-    const script = scriptEl ? $(scriptEl).html() : null;
-
-    if (!script) return [];
-
-    const json = JSON.parse(script);
-
-    const items =
-      json?.props?.pageProps?.dehydratedState?.queries?.[0]?.state?.data
-        ?.items || [];
-
-    return items.map((i: any) => ({
-      reviewId: i.reviewId,
-      content: i.contents,
-      rating: i.rating,
-      date: i.date,
-      platform: "Naver",
-    }));
-  } catch (_) {
-    return [];
-  }
-}
-
-/** ------------------------------------------
- *  4) 마지막 fallback: 네가 만든 DOM 구조 파싱
- *  (구조 변경 대비)
- -------------------------------------------*/
-async function tryDomFallback(placeId: string) {
-  try {
-    const url = `https://m.place.naver.com/restaurant/${placeId}/review/visitor`;
-
-    const html = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Referer: `https://m.place.naver.com/restaurant/${placeId}/home`,
-      },
-    });
-
-    const $ = cheerio.load(html.data);
-    const reviews: any[] = [];
-
-    $("li._3QDEe, li._1gpJH, li._2CVxW").each((_, el) => {
-      const content =
-        $(el).find("span.wo9IH").text().trim() ||
-        $(el).find("span._3whw5").text().trim();
-
-      const ratingRaw = $(el).find("span._Xkcg").text().trim();
-      const rating = Number(ratingRaw) || 0;
-
-      if (content)
-        reviews.push({
-          reviewId: null,
-          content,
-          rating,
-          date: null,
+    } else {
+      await prisma.review.create({
+        data: {
+          userId,
+          reviewId,
+          content: formatDisplayContent(author, content),
+          rating: 0,
           platform: "Naver",
-        });
-    });
-
-    return reviews;
-  } catch (_) {
-    return [];
+        },
+      });
+      newCount += 1;
+    }
   }
+
+  return newCount;
 }
 
-/** ------------------------------------------
- *  리뷰 저장 + 요약 생성
- -------------------------------------------*/
-async function saveReviews(list: any[], userId: string) {
-  let added = 0;
+// 불필요한 안내/메타 텍스트를 제거해 본문만 남긴다
+function cleanReviewText(raw: string) {
+  if (!raw) return "";
+  let text = raw.replace(/\s+/g, " ").trim();
+  // 접미 텍스트/태그 제거
+  const noisePhrases = [
+    /더보기.*$/i,
+    /펼쳐보기.*$/i,
+    /반응 남기기.*$/i,
+    /방문일.*$/i,
+    /\+\d+개의 리뷰가 더 있습니다.*$/i,
+    /커피가 맛있어요.*$/i,
+    /음료가 맛있어요.*$/i,
+    /디저트가 맛있어요.*$/i,
+    /인테리어가 멋져요.*$/i,
+    /뷰가 좋아요.*$/i,
+    /분위기가 좋아요.*$/i,
+    /서비스가 친절해요.*$/i,
+    /가격이 합리적이에요.*$/i,
+    /재방문 의사있어요.*$/i,
+  ];
+  noisePhrases.forEach((re) => {
+    text = text.replace(re, "");
+  });
+  // 리뷰어 정보, 팔로워 숫자 등 제거 (한글/영문 닉네임 + 숫자 패턴)
+  text = text.replace(/^[^\d가-힣A-Za-z]{0,10}[가-힣A-Za-z0-9_*]+리뷰\s+\d+.*?(점심|저녁|오전|오후|평일|주말)/, "");
+  // 태그/키워드 파이프 구분 제거
+  text = text.replace(/(\s*\|\s*)+/g, " ");
+  text = text.replace(/(점심에 방문|저녁에 방문|예약 없이 이용|대기 시간 바로 입장|여행|혼자|데이트|일상|친구|연인|배우자|가족) ?/gi, "");
+  return text.trim();
+}
 
-  for (const r of list) {
-    const exists = await prisma.review.findFirst({
-      where: {
-        userId,
-        ...(r.reviewId ? { reviewId: r.reviewId } : { content: r.content }),
-      },
-    });
+function makeReviewId(placeId: string, content: string) {
+  const hash = crypto.createHash("md5").update(content).digest("hex").slice(0, 8);
+  return `${placeId}-${hash}`;
+}
 
-    if (exists) continue;
-
-    const newReview = await prisma.review.create({
-      data: {
-        userId,
-        reviewId: r.reviewId,
-        platform: "Naver",
-        rating: r.rating,
-        content: r.content,
-        createdAt: r.date ? new Date(r.date) : new Date(),
-      },
-    });
-
-    try {
-      await generateSummary(
-        {
-          body: {
-            reviewId: newReview.id,
-            content: newReview.content,
-          },
-        } as any,
-        {
-          json: () => {},
-          status: () => ({ json: () => {} }),
-        } as any
-      );
-    } catch (e) {
-      console.log("summary error:", e);
-    }
-
-    added++;
-    await sleep(randomDelay());
-  }
-
-  return added;
+function formatDisplayContent(author: string | undefined, content: string) {
+  if (author) return `${author}: ${content}`;
+  return content;
 }

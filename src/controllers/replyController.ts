@@ -9,6 +9,14 @@ export const saveReply = async (req: Request, res: Response) => {
     if (!reviewId || !content)
       return res.status(400).json({ error: "reviewId, content 필요" });
 
+    const review = await prisma.review.findFirst({
+      where: { id: reviewId, userId },
+    });
+
+    if (!review) {
+      return res.status(404).json({ error: "REVIEW_NOT_FOUND" });
+    }
+
     const reply = await prisma.reply.upsert({
       where: { reviewId },
       update: { content, tone },

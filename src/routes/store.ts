@@ -24,9 +24,17 @@ router.post("/extract", (req, res) => {
 
 // ⭐ 2) 매장 등록 + 자동 첫 수집
 router.post("/register-store", async (req, res) => {
-  const { userId, placeId } = req.body;
+  const { placeId } = req.body;
+  const userId = (req as any).user?.id;
 
   try {
+    if (!placeId) {
+      return res.status(400).json({ error: "PLACE_ID_REQUIRED" });
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "UNAUTHORIZED" });
+    }
+
     await prisma.user.update({
       where: { id: userId },
       data: { placeId },

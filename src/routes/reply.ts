@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { saveReply, getReply } from "../controllers/replycontroller";
+import { saveReply, getReply } from "../controllers/replyController";
 
 const router = Router();
 
