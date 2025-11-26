@@ -21,12 +21,13 @@ router.post("/naver", async (req, res) => {
 
   try {
     // ⭐ 크롤러 실행 (DB 저장까지 처리)
-    const addedCount = await fetchNaverReviews(placeId, userId);
+    const result = await fetchNaverReviews(placeId, userId);
 
     res.json({
       ok: true,
-      added: addedCount,
-      message: `리뷰 ${addedCount}개 저장 완료`,
+      added: result.count,
+      logs: result.logs,
+      message: `리뷰 ${result.count}개 저장 완료`,
     });
   } catch (e) {
     console.error("수집 실패:", e);

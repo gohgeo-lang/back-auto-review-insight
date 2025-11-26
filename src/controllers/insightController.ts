@@ -23,7 +23,14 @@ export const getInsights = async (req: Request, res: Response) => {
     const negativeMap: Record<string, number> = {};
     const insightMap: Record<string, number> = {};
     const tagMap: Record<string, number> = {};
+    const keywordMap: Record<string, number> = {};
+    const sentimentCounts = { positive: 0, negative: 0, irrelevant: 0 };
     for (const s of summaries) {
+      const sentiment = (s as any).sentiment || "irrelevant";
+      if (sentimentCounts[sentiment as "positive" | "negative" | "irrelevant"] !== undefined) {
+        sentimentCounts[sentiment as "positive" | "negative" | "irrelevant"] += 1;
+      }
+
       s.positives.forEach((p) => {
         positiveMap[p] = (positiveMap[p] || 0) + 1;
       });
@@ -39,6 +46,10 @@ export const getInsights = async (req: Request, res: Response) => {
       s.tags.forEach((t) => {
         tagMap[t] = (tagMap[t] || 0) + 1;
       });
+
+      (s as any).keywords?.forEach((k: string) => {
+        keywordMap[k] = (keywordMap[k] || 0) + 1;
+      });
     }
 
     const getTop3 = (map: Record<string, number>) =>
@@ -52,6 +63,8 @@ export const getInsights = async (req: Request, res: Response) => {
       negative: getTop3(negativeMap),
       insights: getTop3(insightMap),
       tags: getTop3(tagMap),
+      keywords: getTop3(keywordMap),
+      sentimentCounts,
     });
   } catch (err) {
     console.error("getInsights Error:", err);

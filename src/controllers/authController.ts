@@ -68,3 +68,19 @@ export const setStoreUrl = async (req: Request, res: Response) => {
     return res.status(500).json({ error: "UPDATE_FAILED" });
   }
 };
+
+// 온보딩 완료 플래그 설정
+export const completeOnboarding = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { onboarded: true },
+    });
+    const { password, ...safeUser } = user;
+    return res.json(safeUser);
+  } catch (err) {
+    console.error("completeOnboarding Error", err);
+    return res.status(500).json({ error: "ONBOARDING_UPDATE_FAILED" });
+  }
+};

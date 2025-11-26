@@ -16,6 +16,7 @@ model User {
   placeId   String?
   reviews   Review[]
   createdAt DateTime @default(now())
+  onboarded Boolean  @default(false)
 }
 
 model Review {
@@ -40,6 +41,8 @@ model Summary {
   negatives String[]
   insights  String[]
   tags      String[]
+  sentiment String   @default("irrelevant") // positive | negative | irrelevant
+  keywords  String[] @default([])           // 주요 언급 키워드/메뉴
   createdAt DateTime @default(now())
 }
 

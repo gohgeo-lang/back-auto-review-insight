@@ -2,8 +2,8 @@ import cron from "node-cron";
 import { prisma } from "../lib/prisma";
 import { fetchNaverReviews } from "./naver";
 
-// 3시간마다 실행
-cron.schedule("0 */3 * * *", async () => {
+// 매일 새벽 3시(서버 시간 기준) 실행
+cron.schedule("0 3 * * *", async () => {
   console.log("⏳ [Scheduler] 자동 리뷰 수집 시작...");
 
   try {
@@ -21,10 +21,10 @@ cron.schedule("0 */3 * * *", async () => {
         if (!user.placeId) continue;
 
         console.log(`➡️ [Scheduler] 유저 ${user.id} 리뷰 수집 시작`);
-        const count = await fetchNaverReviews(user.placeId, user.id);
+        const result = await fetchNaverReviews(user.placeId, user.id);
 
         console.log(
-          `[Scheduler] 유저 ${user.id}: 새 리뷰 ${count}개 수집 완료`
+          `[Scheduler] 유저 ${user.id}: 새 리뷰 ${result.count}개 수집 완료`
         );
       } catch (err) {
         console.error(

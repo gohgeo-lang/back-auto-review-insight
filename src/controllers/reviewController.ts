@@ -20,8 +20,12 @@ export const getReviews = async (req: Request, res: Response) => {
 export const getReview = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
+    const reviewId = req.params.id;
     const review = await prisma.review.findFirst({
-      where: { id: req.params.id, userId },
+      where: {
+        userId,
+        OR: [{ id: reviewId }, { reviewId }],
+      },
       include: { summary: true, reply: true },
     });
     if (!review) return res.status(404).json({ error: "REVIEW_NOT_FOUND" });
