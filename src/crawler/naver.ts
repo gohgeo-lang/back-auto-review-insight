@@ -78,7 +78,8 @@ export async function fetchNaverReviews(
       .catch(() => null);
 
     // 스크롤 + 더보기 반복으로 최대한 많은 리뷰 로드
-    await loadAllReviews(frame, 40, logs);
+    // 충분히 깊이 내려가도록 반복 횟수 상향 (대형 매장 대응)
+    await loadAllReviews(frame, 200, logs);
 
     // 리뷰 추출
     if (frame.isDetached()) {
@@ -302,7 +303,7 @@ async function clickLoadMore(frame: puppeteer.Frame, maxTries: number) {
     });
 
     if (!clicked) break;
-    await frame.evaluate(() => new Promise((r) => setTimeout(r, 800)));
+    await frame.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
   }
 }
 
@@ -317,9 +318,9 @@ async function loadAllReviews(
       console.warn("[Crawler] frame detached during loadAllReviews");
       break;
     }
-    await clickLoadMore(frame, 3);
+    await clickLoadMore(frame, 5);
     await frame.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await frame.evaluate(() => new Promise((r) => setTimeout(r, 1000)));
+    await frame.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
 
     let count = prevCount;
     try {

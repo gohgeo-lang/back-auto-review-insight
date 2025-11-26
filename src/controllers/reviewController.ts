@@ -7,7 +7,17 @@ export const getReviews = async (req: Request, res: Response) => {
 
     const reviews = await prisma.review.findMany({
       where: { userId },
-      include: { summary: true, reply: true },
+      select: {
+        id: true,
+        userId: true,
+        reviewId: true,
+        platform: true,
+        rating: true,
+        // 원문 content는 프런트로 전송하지 않음
+        summary: true,
+        reply: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: "desc" },
     });
     return res.json(reviews);
@@ -26,7 +36,16 @@ export const getReview = async (req: Request, res: Response) => {
         userId,
         OR: [{ id: reviewId }, { reviewId }],
       },
-      include: { summary: true, reply: true },
+      select: {
+        id: true,
+        userId: true,
+        reviewId: true,
+        platform: true,
+        rating: true,
+        summary: true,
+        reply: true,
+        createdAt: true,
+      },
     });
     if (!review) return res.status(404).json({ error: "REVIEW_NOT_FOUND" });
     return res.json(review);
