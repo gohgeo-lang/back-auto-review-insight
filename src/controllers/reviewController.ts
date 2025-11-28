@@ -4,12 +4,22 @@ import { prisma } from "../lib/prisma";
 export const getReviews = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
+    const storeId = (req.query.storeId as string | undefined) || undefined;
+
+    if (storeId) {
+      const store = await prisma.store.findFirst({
+        where: { id: storeId, userId },
+        select: { id: true },
+      });
+      if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+    }
 
     const reviews = await prisma.review.findMany({
-      where: { userId },
+      where: { userId, ...(storeId ? { storeId } : {}) },
       select: {
         id: true,
         userId: true,
+        storeId: true,
         reviewId: true,
         platform: true,
         rating: true,

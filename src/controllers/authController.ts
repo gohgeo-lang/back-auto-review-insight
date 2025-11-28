@@ -5,7 +5,7 @@ import { signToken } from "../lib/token";
 
 export const signup = async (req: Request, res: Response) => {
   try {
-    const { email, password, storeName } = req.body;
+    const { email, password, storeName, name, nickname, gender, address } = req.body;
 
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return res.status(400).json({ error: "EMAIL_EXISTS" });
@@ -13,7 +13,7 @@ export const signup = async (req: Request, res: Response) => {
     const hashed = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { email, password: hashed, storeName },
+      data: { email, password: hashed, storeName, name, nickname, gender, address },
     });
 
     const { password: pw, ...safeUser } = user;
@@ -46,6 +46,35 @@ export const login = async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Login Error", err);
     return res.status(500).json({ error: "LOGIN_FAILED" });
+  }
+};
+
+// 현재 사용자 정보 조회
+export const me = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        nickname: true,
+        gender: true,
+        address: true,
+        plan: true,
+        storeName: true,
+        storeUrl: true,
+        placeId: true,
+        createdAt: true,
+        onboarded: true,
+      },
+    });
+    if (!user) return res.status(404).json({ error: "USER_NOT_FOUND" });
+    return res.json(user);
+  } catch (err) {
+    console.error("me Error", err);
+    return res.status(500).json({ error: "ME_FAILED" });
   }
 };
 
@@ -82,5 +111,22 @@ export const completeOnboarding = async (req: Request, res: Response) => {
   } catch (err) {
     console.error("completeOnboarding Error", err);
     return res.status(500).json({ error: "ONBOARDING_UPDATE_FAILED" });
+  }
+};
+
+// 프로필/기본정보 수정
+export const updateProfile = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const { name, nickname, gender, address } = req.body;
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { name, nickname, gender, address },
+    });
+    const { password, ...safeUser } = updated;
+    return res.json(safeUser);
+  } catch (err) {
+    console.error("updateProfile Error", err);
+    return res.status(500).json({ error: "PROFILE_UPDATE_FAILED" });
   }
 };

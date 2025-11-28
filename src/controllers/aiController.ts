@@ -172,15 +172,28 @@ ${targetContent}
 export const generateMissingSummaries = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
+    const storeId = (req.body?.storeId as string | undefined) || undefined;
     if (!userId) return res.status(401).json({ error: "UNAUTHORIZED" });
     if (!process.env.OPENAI_API_KEY) {
       return res.status(400).json({ error: "MISSING_OPENAI_API_KEY" });
     }
 
+    if (storeId) {
+      const store = await prisma.store.findFirst({
+        where: { id: storeId, userId },
+        select: { id: true },
+      });
+      if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+    }
+
     const pending = await prisma.review.findMany({
-      where: { userId, summary: null },
+      where: {
+        userId,
+        summary: null,
+        ...(storeId ? { storeId } : {}),
+      },
       orderBy: { createdAt: "desc" },
-      take: 5,
+      take: 10,
     });
 
     if (pending.length === 0) {

@@ -4,9 +4,23 @@ import { prisma } from "../lib/prisma";
 export const getInsights = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
+    const storeId = (req.query.storeId as string | undefined) || undefined;
+
+    if (storeId) {
+      const store = await prisma.store.findFirst({
+        where: { id: storeId, userId },
+        select: { id: true },
+      });
+      if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+    }
 
     const summaries = await prisma.summary.findMany({
-      where: { review: { userId } },
+      where: {
+        review: {
+          userId,
+          ...(storeId ? { storeId } : {}),
+        },
+      },
       include: { review: true },
     });
 

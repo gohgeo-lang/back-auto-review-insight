@@ -15,6 +15,8 @@ import authRoutes from "./routes/auth";
 import reviewRoutes from "./routes/review";
 import aiRoutes from "./routes/ai";
 import storeRoutes from "./routes/store";
+import reportRoutes from "./routes/report";
+import billingRoutes from "./routes/billing";
 
 const app = express();
 
@@ -38,6 +40,8 @@ app.use("/insight", authMiddleware, insightRoutes);
 app.use("/reviews", authMiddleware, reviewRoutes);
 app.use("/ai", authMiddleware, aiRoutes);
 app.use("/store", authMiddleware, storeRoutes);
+app.use("/reports", authMiddleware, reportRoutes);
+app.use("/billing", authMiddleware, billingRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log("Server running on port", PORT));

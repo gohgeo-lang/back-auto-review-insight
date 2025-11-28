@@ -11,10 +11,23 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   password  String
+  name      String?
+  nickname  String?
+  gender    String?
+  address   String?
+  subscriptionStatus String   @default("free") // free | active | paused
+  subscriptionTier   String?  @default("base")
+  storeQuota         Int      @default(1)      // 허용 매장 수
+  extraCredits       Int      @default(0)      // 추가 수집 크레딧(건수)
+  nextBillingAt      DateTime?
+  lastBilledAt       DateTime?
+  plan      String?  // deprecated legacy field
   storeName String?
   storeUrl  String?
   placeId   String?
   reviews   Review[]
+  stores    Store[]
+  reports   Report[]
   createdAt DateTime @default(now())
   onboarded Boolean  @default(false)
 }
@@ -23,6 +36,8 @@ model Review {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id]) // ✅ 여기서 관계 설정
+  storeId   String?
+  store     Store?   @relation(fields: [storeId], references: [id])
   reviewId  String?
   platform  String // Naver / Kakao / Google
   rating    Int
@@ -52,5 +67,33 @@ model Reply {
   review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   tone      String
   content   String
+  createdAt DateTime @default(now())
+}
+
+model Store {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String?
+  url       String?
+  placeId   String?
+  reviews   Review[]
+  lastCrawledAt   DateTime?
+  lastReviewCursor String?
+  autoCrawlEnabled  Boolean  @default(true)
+  autoReportEnabled Boolean  @default(true)
+  reports   Report[]
+  createdAt DateTime @default(now())
+}
+
+model Report {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String?
+  store     Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  period    String   // weekly | monthly | quarterly | yearly | custom
+  rangeDays Int
+  payload   Json
   createdAt DateTime @default(now())
 }

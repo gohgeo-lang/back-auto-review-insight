@@ -2,7 +2,22 @@ import puppeteer from "puppeteer";
 import { prisma } from "../lib/prisma";
 import crypto from "crypto";
 
-type CrawlResult = { count: number; logs: string[] };
+type CrawlResult = {
+  count: number;
+  logs: string[];
+  rangeDays?: number;
+  limitedBy?: string;
+};
+
+const FREE_MAX_REVIEWS = 300;
+const MIN_FOR_CONFIDENCE = 30;
+const DAY_WINDOWS = [30, 90, 180, 365, 0]; // 0 = 전체
+
+type CrawlOptions = {
+  maxReviews?: number;
+  dayWindows?: number[];
+  since?: Date | null; // 증분 기준
+};
 
 /**
  * 네이버 플레이스에서 리뷰를 수집해 Prisma에 저장
@@ -11,8 +26,12 @@ type CrawlResult = { count: number; logs: string[] };
  */
 export async function fetchNaverReviews(
   placeId: string,
-  userId: string
+  userId: string,
+  storeId?: string,
+  options?: CrawlOptions
 ): Promise<CrawlResult> {
+  const maxReviews = options?.maxReviews ?? FREE_MAX_REVIEWS;
+  const dayWindows = options?.dayWindows ?? DAY_WINDOWS;
   let browser: puppeteer.Browser | null = null;
   const logs: string[] = [];
 
@@ -26,6 +45,18 @@ export async function fetchNaverReviews(
         "--window-size=1280,800",
       ],
     });
+
+    // 증분 수집을 위한 최신 저장 시점 조회
+    const latest =
+      options?.since ??
+      (
+        await prisma.review.findFirst({
+          where: { userId, platform: "Naver", storeId: storeId || undefined },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        })
+      )?.createdAt ??
+      null;
 
     const page = await browser.newPage();
     await page.setUserAgent(
@@ -77,9 +108,8 @@ export async function fetchNaverReviews(
       .waitForSelector(".pui__vn15t2", { timeout: 20000 })
       .catch(() => null);
 
-    // 스크롤 + 더보기 반복으로 최대한 많은 리뷰 로드
-    // 충분히 깊이 내려가도록 반복 횟수 상향 (대형 매장 대응)
-    await loadAllReviews(frame, 200, logs);
+    // 스크롤 + 더보기 반복으로 최대한 많은 리뷰 로드 (무료 플랜 기준)
+    await loadAllReviews(frame, 200, logs, maxReviews);
 
     // 리뷰 추출
     if (frame.isDetached()) {
@@ -88,8 +118,7 @@ export async function fetchNaverReviews(
     }
 
     const reviews = await frame.evaluate(() => {
-      const result: { content: string; author?: string; dateText?: string }[] =
-        [];
+      const result: { content: string; author?: string; dateText?: string }[] = [];
       const contentEls = document.querySelectorAll(".pui__vn15t2");
 
       contentEls.forEach((el) => {
@@ -154,9 +183,47 @@ export async function fetchNaverReviews(
       return result;
     });
 
+    // 날짜 파싱 및 정렬
+    const enriched = reviews.map((item) => ({
+      ...item,
+      reviewDate: item.dateText ? parseReviewDate(item.dateText) : null,
+    }));
+    // 최신순 정렬 (날짜 없는 것은 뒤로)
+    enriched.sort((a, b) => {
+      const da = a.reviewDate ? a.reviewDate.getTime() : 0;
+      const db = b.reviewDate ? b.reviewDate.getTime() : 0;
+      return db - da;
+    });
+
+    // 혼합 확장 규칙 적용: 최소 30개 확보될 때까지 기간 확장, 최대 300개
+    let selected: typeof enriched = [];
+    let usedWindow = 0;
+    for (const days of dayWindows) {
+      usedWindow = days;
+      if (days === 0) {
+        selected = enriched;
+      } else {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - days);
+        selected = enriched.filter(
+          (r) => !r.reviewDate || r.reviewDate >= cutoff
+        );
+      }
+      if (selected.length >= MIN_FOR_CONFIDENCE || days === 0) break;
+    }
+    if (selected.length > maxReviews) {
+      selected = selected.slice(0, maxReviews);
+    }
+
+    // 증분 필터: 기존 최신 리뷰 이후 것만 저장 (날짜가 없는 것은 저장)
+    const filtered = selected.filter((item) => {
+      if (!latestDate || !item.reviewDate) return true;
+      return item.reviewDate > latestDate;
+    });
+
     // Prisma에 저장/업데이트
     let newCount = 0;
-    for (const item of reviews) {
+    for (const item of filtered) {
       const rawContent = (item.content || "").trim();
       const cleaned = cleanReviewText(rawContent);
       const content = cleaned || rawContent; // 정제 결과가 비어도 원문 저장
@@ -164,10 +231,8 @@ export async function fetchNaverReviews(
       const author = item.author?.trim();
       const reviewId = makeReviewId(placeId, `${author || ""}-${content}`); // surrogate key
 
-      const reviewDate = item.dateText ? parseReviewDate(item.dateText) : null;
-
       const existing = await prisma.review.findFirst({
-        where: { userId, reviewId },
+        where: { userId, storeId: storeId || undefined, reviewId },
       });
 
       if (existing) {
@@ -176,6 +241,8 @@ export async function fetchNaverReviews(
           data: {
             content: formatDisplayContent(author, content),
             platform: "Naver",
+            storeId: storeId || undefined,
+            createdAt: item.reviewDate ?? undefined,
           },
         });
       } else {
@@ -186,15 +253,34 @@ export async function fetchNaverReviews(
             content: formatDisplayContent(author, content),
             rating: 0,
             platform: "Naver",
-            createdAt: reviewDate ?? undefined,
+            storeId: storeId || undefined,
+            createdAt: item.reviewDate ?? undefined,
           },
         });
         newCount += 1;
+        if (newCount >= maxReviews) break;
       }
     }
 
-    logs.push(`수집 완료: ${newCount}개`);
-    return { count: newCount, logs };
+    const limitedBy =
+      selected.length >= maxReviews
+        ? "limit_max"
+        : usedWindow === 0
+        ? "all_reviews"
+        : `days_${usedWindow}`;
+
+    logs.push(
+      `수집 완료: ${newCount}개 (범위: ${
+        usedWindow === 0 ? "전체" : `${usedWindow}일`
+      }, 최대 ${maxReviews}개)`
+    );
+    if (latest) logs.push(`증분 수집 기준: ${latest.toISOString()}`);
+    return {
+      count: newCount,
+      logs,
+      rangeDays: usedWindow || undefined,
+      limitedBy,
+    };
   } catch (err) {
     console.error("[Crawler] Naver fetch failed:", err);
     return { count: 0, logs: [...logs, "수집 실패"] }; // 상위에서 경고만 띄우도록
@@ -310,7 +396,8 @@ async function clickLoadMore(frame: puppeteer.Frame, maxTries: number) {
 async function loadAllReviews(
   frame: puppeteer.Frame,
   maxLoops: number,
-  logs: string[]
+  logs: string[],
+  hardLimit: number
 ) {
   let prevCount = 0;
   for (let i = 0; i < maxLoops; i++) {
@@ -332,6 +419,10 @@ async function loadAllReviews(
     if (count !== prevCount) {
       console.log(`↳ 로드된 리뷰: ${count}`);
       logs.push(`↳ 로드된 리뷰: ${count}`);
+    }
+    if (count >= hardLimit * 1.2) {
+      logs.push(`↳ 최대 수집량(${hardLimit}) 근처에서 중단`);
+      break;
     }
     if (count === prevCount) break;
     prevCount = count;
