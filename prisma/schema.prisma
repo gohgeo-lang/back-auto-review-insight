@@ -19,6 +19,8 @@ model User {
   subscriptionTier   String?  @default("base")
   storeQuota         Int      @default(1)      // 허용 매장 수
   extraCredits       Int      @default(0)      // 추가 수집 크레딧(건수)
+  lastFreeTokenAt    DateTime?
+  lastFreeTokenExtraAt DateTime?
   nextBillingAt      DateTime?
   lastBilledAt       DateTime?
   plan      String?  // deprecated legacy field

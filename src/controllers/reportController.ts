@@ -24,23 +24,20 @@ export const generateReport = async (req: Request, res: Response) => {
       if (!own) return res.status(404).json({ error: "STORE_NOT_FOUND" });
     }
 
-    // 무료 사용자는 첫 리포트 1회만 무료, 그 이후에는 구독 또는 크레딧 필요
+    // 구독이 없으면 토큰 기반으로 리포트 생성 (기본 10토큰 = 1회)
+    const costPerReport = 10;
     if (user.subscriptionStatus !== "active") {
-      const reportCount = await prisma.report.count({
-        where: { userId, ...(storeId ? { storeId } : {}) },
-      });
-      if (reportCount > 0) {
-        if ((user.extraCredits || 0) <= 0) {
-          return res.status(402).json({
-            error: "REPORT_PAYMENT_REQUIRED",
-            message: "무료 리포트 1회를 사용했습니다. 추가 리포트는 결제 후 이용하세요.",
-          });
-        }
-        await prisma.user.update({
-          where: { id: userId },
-          data: { extraCredits: Math.max(0, (user.extraCredits || 0) - 1) },
+      const tokens = user.extraCredits || 0;
+      if (tokens < costPerReport) {
+        return res.status(402).json({
+          error: "TOKEN_REQUIRED",
+          message: "무료 토큰이 부족합니다. 광고를 보거나 결제 후 이용하세요.",
         });
       }
+      await prisma.user.update({
+        where: { id: userId },
+        data: { extraCredits: Math.max(0, tokens - costPerReport) },
+      });
     }
 
     const cutoff = getCutoff(rangeDays);

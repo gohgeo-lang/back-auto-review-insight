@@ -40,19 +40,34 @@ router.post("/naver", async (req, res) => {
       : null;
     if (!user) return res.status(404).json({ error: "USER_NOT_FOUND" });
 
-    const isSubActive = user.subscriptionStatus === "active";
-    const baseLimit = isSubActive ? 3000 : 300;
-    const extraCredits = user.extraCredits || 0;
-    const allowedMax = isSubActive ? baseLimit : baseLimit + extraCredits;
-    const dayWindows = isSubActive ? [180, 365, 0] : [30, 90, 180, 365, 0];
+    // storeId가 없으면 동일 placeId로 등록된 매장을 자동 매핑
+    if (!targetStoreId && targetPlaceId) {
+      const found = await prisma.store.findFirst({
+        where: { userId, placeId: targetPlaceId },
+      });
+      if (found) {
+        targetStoreId = found.id;
+      }
+    }
 
-    if (!isSubActive && allowedMax <= 0) {
+    // 수동 스캔은 구독 여부와 상관없이 토큰 10개 차감
+    const cost = 10;
+    const tokens = user.extraCredits || 0;
+    if (tokens < cost) {
       return res.status(402).json({
         error: "CREDITS_REQUIRED",
-        message:
-          "무료 한도를 모두 사용했습니다. 추가 크레딧을 구매하거나 구독을 활성화하세요.",
+        message: "토큰이 부족합니다. 충전 후 이용해주세요.",
       });
     }
+    await prisma.user.update({
+      where: { id: userId },
+      data: { extraCredits: Math.max(0, tokens - cost) },
+    });
+
+    const isSubActive = user.subscriptionStatus === "active";
+    const baseLimit = isSubActive ? 3000 : 300; // 무료 플랜은 1개월 최대 300건
+    const allowedMax = baseLimit;
+    const dayWindows = isSubActive ? [180, 365, 0] : [30, 90, 180, 365, 0];
 
     // ⭐ 크롤러 실행 (DB 저장까지 처리)
     const result = await fetchNaverReviews(targetPlaceId, userId, targetStoreId, {
@@ -60,17 +75,6 @@ router.post("/naver", async (req, res) => {
       dayWindows,
       since: store?.lastCrawledAt ?? null,
     });
-
-    // 무료 한도 초과분에 대해 크레딧 차감
-    if (!isSubActive && result.count > baseLimit) {
-      const usedCredits = Math.min(extraCredits, result.count - baseLimit);
-      if (usedCredits > 0) {
-        await prisma.user.update({
-          where: { id: userId },
-          data: { extraCredits: Math.max(0, extraCredits - usedCredits) },
-        });
-      }
-    }
 
     // 마지막 수집 시각 업데이트
     if (targetStoreId) {

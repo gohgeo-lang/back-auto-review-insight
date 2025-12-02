@@ -168,7 +168,7 @@ ${targetContent}
   }
 };
 
-// 미분석 리뷰 일괄 요약 (최대 10개씩)
+// 미분석 리뷰 일괄 요약 (5개 소배치 직렬 실행)
 export const generateMissingSummaries = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
@@ -186,6 +186,7 @@ export const generateMissingSummaries = async (req: Request, res: Response) => {
       if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
     }
 
+    // 한 번에 모두 가져온 뒤 5개씩 배치 처리
     const pending = await prisma.review.findMany({
       where: {
         userId,
@@ -193,29 +194,40 @@ export const generateMissingSummaries = async (req: Request, res: Response) => {
         ...(storeId ? { storeId } : {}),
       },
       orderBy: { createdAt: "desc" },
-      take: 10,
+      take: 100, // 상한: 한 번 호출에 최대 100건까지 가져와 5개씩 처리
     });
 
     if (pending.length === 0) {
       return res.json({ ok: true, processed: 0, message: "NO_PENDING_REVIEWS" });
     }
 
+    const batchSize = 5;
     let processed = 0;
     const failed: string[] = [];
-    for (const r of pending) {
-      try {
-        await summarizeReviewText(r.id, r.content);
-        processed += 1;
-      } catch (err) {
-        console.error("Batch summary failed for", r.id, err);
-        if (err instanceof QuotaError) {
-          return res.status(429).json({
-            error: "OPENAI_QUOTA_EXCEEDED",
-            processed,
-            failed,
-          });
+
+    // 5개씩 병렬 처리(소배치 단위)로 속도 향상
+    for (let i = 0; i < pending.length; i += batchSize) {
+      const chunk = pending.slice(i, i + batchSize);
+      const results = await Promise.allSettled(
+        chunk.map((r) => summarizeReviewText(r.id, r.content))
+      );
+
+      for (let idx = 0; idx < results.length; idx++) {
+        const r = results[idx];
+        const target = chunk[idx];
+        if (r.status === "fulfilled") {
+          processed += 1;
+        } else {
+          console.error("Batch summary failed for", target.id, r.reason);
+          if (r.reason instanceof QuotaError) {
+            return res.status(429).json({
+              error: "OPENAI_QUOTA_EXCEEDED",
+              processed,
+              failed,
+            });
+          }
+          failed.push(target.id);
         }
-        failed.push(r.id);
       }
     }
 

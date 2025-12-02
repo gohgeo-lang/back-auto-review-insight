@@ -32,6 +32,7 @@ export async function fetchNaverReviews(
 ): Promise<CrawlResult> {
   const maxReviews = options?.maxReviews ?? FREE_MAX_REVIEWS;
   const dayWindows = options?.dayWindows ?? DAY_WINDOWS;
+  const latestDate = options?.since ? new Date(options.since) : null;
   let browser: puppeteer.Browser | null = null;
   const logs: string[] = [];
 
@@ -195,7 +196,7 @@ export async function fetchNaverReviews(
       return db - da;
     });
 
-    // 혼합 확장 규칙 적용: 최소 30개 확보될 때까지 기간 확장, 최대 300개
+    // 혼합 확장 규칙 적용: 최대치(기본 300)까지 도달할 때까지 기간 확장
     let selected: typeof enriched = [];
     let usedWindow = 0;
     for (const days of dayWindows) {
@@ -209,7 +210,7 @@ export async function fetchNaverReviews(
           (r) => !r.reviewDate || r.reviewDate >= cutoff
         );
       }
-      if (selected.length >= MIN_FOR_CONFIDENCE || days === 0) break;
+      if (selected.length >= maxReviews || days === 0) break;
     }
     if (selected.length > maxReviews) {
       selected = selected.slice(0, maxReviews);

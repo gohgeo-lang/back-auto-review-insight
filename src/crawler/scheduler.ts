@@ -35,8 +35,8 @@ cron.schedule("0 3 * * *", async () => {
         }
         const user = store.user;
         const isSubActive = user.subscriptionStatus === "active";
-        const baseLimit = isSubActive ? 3000 : 300;
-        const allowedMax = isSubActive ? baseLimit : baseLimit + (user.extraCredits || 0);
+        const baseLimit = isSubActive ? 3000 : 300; // 무료 플랜: 1개월 300건
+        const allowedMax = baseLimit;
         const dayWindows = isSubActive ? [180, 365, 0] : [30, 90, 180, 365, 0];
 
         console.log(`➡️ [Scheduler] 매장 ${store.id} 수집 시작`);
@@ -45,20 +45,6 @@ cron.schedule("0 3 * * *", async () => {
           dayWindows,
           since: store.lastCrawledAt ?? null,
         });
-
-        // 무료 한도 초과분 크레딧 차감
-        if (!isSubActive && result.count > baseLimit) {
-          const usedCredits = Math.min(
-            user.extraCredits || 0,
-            result.count - baseLimit
-          );
-          if (usedCredits > 0) {
-            await prisma.user.update({
-              where: { id: user.id },
-              data: { extraCredits: Math.max(0, (user.extraCredits || 0) - usedCredits) },
-            });
-          }
-        }
 
         // 마지막 수집 시각 업데이트
         await prisma.store.update({

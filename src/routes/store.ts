@@ -3,6 +3,8 @@ import { extractPlaceId } from "../utils/naverPlace";
 import { prisma } from "../lib/prisma";
 import { fetchNaverReviews } from "../crawler/naver";
 import { authMiddleware } from "../middleware/authMiddleware";
+import axios from "axios";
+import * as cheerio from "cheerio";
 
 const router = Router();
 
@@ -42,20 +44,42 @@ router.post("/register-store", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ error: "USER_NOT_FOUND" });
 
-    const limit = user.storeQuota ?? 1;
-    const count = await prisma.store.count({ where: { userId } });
-    if (count >= limit) {
-      return res.status(400).json({
-        error: "STORE_LIMIT_EXCEEDED",
-        message: `등록 한도 초과: 현재 구독에서 최대 ${limit}개까지 등록할 수 있습니다.`,
-      });
+    let finalName = name;
+    // placeId를 이용해 네이버 페이지에서 상호명 자동 추출 (베스트Effort)
+    if (!finalName) {
+      try {
+        const resp = await axios.get(`https://m.place.naver.com/restaurant/${placeId}/home`, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+          },
+        });
+        const $ = cheerio.load(resp.data);
+        const rawTitle =
+          $('meta[property="og:title"]').attr("content") ||
+          $('meta[name="twitter:title"]').attr("content") ||
+          $("title").text() ||
+          "";
+        const cleaned = rawTitle
+          .replace(/\s*[:|]\s*네이버.*/i, "")
+          .replace(/\s*-\s*네이버.*/i, "")
+          .replace(/네이버\s*플레이스/i, "")
+          .trim();
+        if (cleaned) {
+          finalName = cleaned;
+        } else if (rawTitle) {
+          finalName = rawTitle.trim();
+        }
+      } catch (err) {
+        console.warn("[store] place name fetch failed", err);
+      }
     }
 
     const store = await prisma.store.create({
       data: {
         userId,
         placeId,
-        name,
+        name: finalName,
         url,
         autoCrawlEnabled: autoCrawlEnabled !== false,
         autoReportEnabled: autoReportEnabled !== false,

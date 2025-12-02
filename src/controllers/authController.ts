@@ -13,7 +13,16 @@ export const signup = async (req: Request, res: Response) => {
     const hashed = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { email, password: hashed, storeName, name, nickname, gender, address },
+      data: {
+        email,
+        password: hashed,
+        storeName,
+        name,
+        nickname,
+        gender,
+        address,
+        extraCredits: 10, // 가입 시 기본 10토큰 지급 (인사이트 1회 사용량)
+      },
     });
 
     const { password: pw, ...safeUser } = user;
@@ -66,6 +75,13 @@ export const me = async (req: Request, res: Response) => {
         storeName: true,
         storeUrl: true,
         placeId: true,
+        subscriptionStatus: true,
+        subscriptionTier: true,
+        storeQuota: true,
+        extraCredits: true,
+        lastFreeTokenAt: true,
+        nextBillingAt: true,
+        lastBilledAt: true,
         createdAt: true,
         onboarded: true,
       },
