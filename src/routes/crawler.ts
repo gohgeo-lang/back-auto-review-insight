@@ -4,6 +4,7 @@ import { authMiddleware } from "../middleware/authMiddleware";
 import { prisma } from "../lib/prisma";
 
 const router = Router();
+const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 // 모든 크롤링 엔드포인트는 인증 필요
 router.use(authMiddleware);
@@ -50,7 +51,7 @@ router.post("/naver", async (req, res) => {
       }
     }
 
-    // 수동 스캔은 구독 여부와 상관없이 토큰 10개 차감
+    // 토큰 차감/구독 여부 검사 (기본 10개 필요)
     const cost = 10;
     const tokens = user.extraCredits || 0;
     if (tokens < cost) {
@@ -64,17 +65,39 @@ router.post("/naver", async (req, res) => {
       data: { extraCredits: Math.max(0, tokens - cost) },
     });
 
-    const isSubActive = user.subscriptionStatus === "active";
-    const baseLimit = isSubActive ? 3000 : 300; // 무료 플랜은 1개월 최대 300건
+    const baseLimit = 300; // 정기 구독과 무관하게 수동 스캔은 고정 300개
     const allowedMax = baseLimit;
-    const dayWindows = isSubActive ? [180, 365, 0] : [30, 90, 180, 365, 0];
+    const dayWindows = [30, 90, 180, 365, 0];
 
-    // ⭐ 크롤러 실행 (DB 저장까지 처리)
-    const result = await fetchNaverReviews(targetPlaceId, userId, targetStoreId, {
-      maxReviews: allowedMax,
-      dayWindows,
-      since: store?.lastCrawledAt ?? null,
-    });
+    // ⭐ 크롤러 실행 (재시도 포함, DB 저장까지 처리)
+    const maxAttempts = 3;
+    let result: any = null;
+    let lastError: any = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        result = await fetchNaverReviews(targetPlaceId, userId, targetStoreId, {
+          maxReviews: allowedMax,
+          dayWindows,
+          since: store?.lastCrawledAt ?? null,
+        });
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxAttempts) {
+          await wait(1500);
+          continue;
+        }
+      }
+    }
+    if (!result) {
+      // 실패 시 토큰 환불
+      await prisma.user.update({
+        where: { id: userId },
+        data: { extraCredits: { increment: cost } },
+      });
+      console.error("수집 실패(재시도 후):", lastError);
+      return res.status(500).json({ error: "CRAWL_FAILED_RETRY" });
+    }
 
     // 마지막 수집 시각 업데이트
     if (targetStoreId) {

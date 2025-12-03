@@ -6,6 +6,29 @@ const router = Router();
 
 router.use(authMiddleware);
 
+// 매장별 정기 리포트 구독 활성화 (월 3000원 가정, 결제 로직은 미구현)
+router.post("/subscribe-store", async (req, res) => {
+  const userId = (req as any).user?.id;
+  const storeId = req.body?.storeId as string | undefined;
+  if (!userId) return res.status(401).json({ error: "UNAUTHORIZED" });
+  if (!storeId) return res.status(400).json({ error: "STORE_ID_REQUIRED" });
+
+  const store = await prisma.store.findFirst({ where: { id: storeId, userId } });
+  if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+
+  // 결제/정기 결제 로직은 별도 구현 필요. 여기서는 상태만 활성화.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { subscriptionStatus: "active" },
+  });
+  await prisma.store.update({
+    where: { id: storeId },
+    data: { autoReportEnabled: true },
+  });
+
+  return res.json({ ok: true, storeId, subscription: "active" });
+});
+
 // 단순 크레딧 추가 (테스트/수동 결제용)
 router.post("/credits", async (req, res) => {
   const userId = (req as any).user?.id;

@@ -130,4 +130,55 @@ router.post("/settings", async (req, res) => {
   return res.json(updated);
 });
 
+// 매장 정보 수정 (name/url/placeId, auto flags)
+router.put("/:id", async (req, res) => {
+  const userId = (req as any).user?.id;
+  const storeId = req.params.id;
+  const { name, url, placeId, autoCrawlEnabled, autoReportEnabled } = req.body;
+
+  if (!userId) return res.status(401).json({ error: "UNAUTHORIZED" });
+  const store = await prisma.store.findFirst({ where: { id: storeId, userId } });
+  if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+
+  const updated = await prisma.store.update({
+    where: { id: storeId },
+    data: {
+      name: name ?? store.name,
+      url: url ?? store.url,
+      placeId: placeId ?? store.placeId,
+      autoCrawlEnabled: autoCrawlEnabled ?? store.autoCrawlEnabled,
+      autoReportEnabled: autoReportEnabled ?? store.autoReportEnabled,
+    },
+  });
+
+  return res.json({ ok: true, store: updated });
+});
+
+// 매장 삭제 (연관 리뷰/요약/리포트/배치요약 포함)
+router.delete("/:id", async (req, res) => {
+  const userId = (req as any).user?.id;
+  const storeId = req.params.id;
+  if (!userId) return res.status(401).json({ error: "UNAUTHORIZED" });
+
+  const store = await prisma.store.findFirst({ where: { id: storeId, userId } });
+  if (!store) return res.status(404).json({ error: "STORE_NOT_FOUND" });
+
+  // 리뷰 및 종속 엔티티 정리
+  await prisma.summary.deleteMany({
+    where: { review: { storeId, userId } },
+  });
+  await prisma.review.deleteMany({
+    where: { storeId, userId },
+  });
+  await prisma.report.deleteMany({
+    where: { storeId, userId },
+  });
+  await prisma.batchSummary.deleteMany({
+    where: { storeId, userId },
+  });
+  await prisma.store.delete({ where: { id: storeId } });
+
+  return res.json({ ok: true, deleted: storeId });
+});
+
 export default router;

@@ -24,6 +24,27 @@ export const getInsights = async (req: Request, res: Response) => {
       include: { review: true },
     });
 
+    // 최종 인사이트 리포트가 있으면 우선 반환 (period='insight')
+    const latestReport = await prisma.report.findFirst({
+      where: { userId, period: "insight", ...(storeId ? { storeId } : {}) },
+      orderBy: { createdAt: "desc" },
+    });
+    if (latestReport?.payload) {
+      const p: any = latestReport.payload || {};
+      // 최소한 프런트가 기대하는 필드를 채워서 반환
+      return res.json({
+        ...p,
+        keywords: p.keywords || [],
+        positives: p.positives?.map((x: any) => x.title || x) || [],
+        negatives: p.negatives?.map((x: any) => x.title || x) || [],
+        trends: p.trends || [],
+        recentSummaries: p.recentSummaries || [],
+        description: p.shopCharacter || p.description || "",
+        insightsSummary: p.summary || "",
+        solutions: p.solutions || [],
+      });
+    }
+
     if (summaries.length === 0) {
       return res.json({
         positive: [],

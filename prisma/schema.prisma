@@ -8,30 +8,31 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  name      String?
-  nickname  String?
-  gender    String?
-  address   String?
-  subscriptionStatus String   @default("free") // free | active | paused
-  subscriptionTier   String?  @default("base")
-  storeQuota         Int      @default(1)      // 허용 매장 수
-  extraCredits       Int      @default(0)      // 추가 수집 크레딧(건수)
-  lastFreeTokenAt    DateTime?
+  id                   String         @id @default(cuid())
+  email                String         @unique
+  password             String
+  name                 String?
+  nickname             String?
+  gender               String?
+  address              String?
+  subscriptionStatus   String         @default("free") // free | active | paused
+  subscriptionTier     String?        @default("base")
+  storeQuota           Int            @default(1) // 허용 매장 수
+  extraCredits         Int            @default(0) // 추가 수집 크레딧(건수)
+  lastFreeTokenAt      DateTime?
   lastFreeTokenExtraAt DateTime?
-  nextBillingAt      DateTime?
-  lastBilledAt       DateTime?
-  plan      String?  // deprecated legacy field
-  storeName String?
-  storeUrl  String?
-  placeId   String?
-  reviews   Review[]
-  stores    Store[]
-  reports   Report[]
-  createdAt DateTime @default(now())
-  onboarded Boolean  @default(false)
+  nextBillingAt        DateTime?
+  lastBilledAt         DateTime?
+  plan                 String? // deprecated legacy field
+  storeName            String?
+  storeUrl             String?
+  placeId              String?
+  reviews              Review[]
+  stores               Store[]
+  reports              Report[]
+  batchSummaries       BatchSummary[]
+  createdAt            DateTime       @default(now())
+  onboarded            Boolean        @default(false)
 }
 
 model Review {
@@ -59,7 +60,7 @@ model Summary {
   insights  String[]
   tags      String[]
   sentiment String   @default("irrelevant") // positive | negative | irrelevant
-  keywords  String[] @default([])           // 주요 언급 키워드/메뉴
+  keywords  String[] @default([]) // 주요 언급 키워드/메뉴
   createdAt DateTime @default(now())
 }
 
@@ -73,19 +74,20 @@ model Reply {
 }
 
 model Store {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name      String?
-  url       String?
-  placeId   String?
-  reviews   Review[]
-  lastCrawledAt   DateTime?
-  lastReviewCursor String?
-  autoCrawlEnabled  Boolean  @default(true)
-  autoReportEnabled Boolean  @default(true)
-  reports   Report[]
-  createdAt DateTime @default(now())
+  id                String         @id @default(cuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String?
+  url               String?
+  placeId           String?
+  reviews           Review[]
+  lastCrawledAt     DateTime?
+  lastReviewCursor  String?
+  autoCrawlEnabled  Boolean        @default(true)
+  autoReportEnabled Boolean        @default(true)
+  reports           Report[]
+  batchSummaries    BatchSummary[]
+  createdAt         DateTime       @default(now())
 }
 
 model Report {
@@ -94,8 +96,28 @@ model Report {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   storeId   String?
   store     Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  period    String   // weekly | monthly | quarterly | yearly | custom
+  period    String // weekly | monthly | quarterly | yearly | custom
   rangeDays Int
   payload   Json
   createdAt DateTime @default(now())
+}
+
+model BatchSummary {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId           String?
+  store             Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  reviewIds         String[]
+  batchSummary      String?
+  batchKeywords     String[]
+  batchPositives    String[]
+  batchNegatives    String[]
+  batchSentimentPos Int      @default(0)
+  batchSentimentNeu Int      @default(0)
+  batchSentimentNeg Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  @@index([userId])
+  @@index([storeId])
 }
