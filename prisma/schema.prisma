@@ -55,6 +55,7 @@ model Summary {
   id        String   @id @default(cuid())
   reviewId  String   @unique
   review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  summary   String   @default("")
   positives String[]
   negatives String[]
   insights  String[]
@@ -80,6 +81,12 @@ model Store {
   name              String?
   url               String?
   placeId           String?
+  naverPlaceId      String?
+  googlePlaceId     String?
+  kakaoPlaceId      String?
+  naverUrl          String?
+  googleUrl         String?
+  kakaoUrl          String?
   reviews           Review[]
   lastCrawledAt     DateTime?
   lastReviewCursor  String?

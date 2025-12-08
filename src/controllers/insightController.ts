@@ -24,27 +24,6 @@ export const getInsights = async (req: Request, res: Response) => {
       include: { review: true },
     });
 
-    // 최종 인사이트 리포트가 있으면 우선 반환 (period='insight')
-    const latestReport = await prisma.report.findFirst({
-      where: { userId, period: "insight", ...(storeId ? { storeId } : {}) },
-      orderBy: { createdAt: "desc" },
-    });
-    if (latestReport?.payload) {
-      const p: any = latestReport.payload || {};
-      // 최소한 프런트가 기대하는 필드를 채워서 반환
-      return res.json({
-        ...p,
-        keywords: p.keywords || [],
-        positives: p.positives?.map((x: any) => x.title || x) || [],
-        negatives: p.negatives?.map((x: any) => x.title || x) || [],
-        trends: p.trends || [],
-        recentSummaries: p.recentSummaries || [],
-        description: p.shopCharacter || p.description || "",
-        insightsSummary: p.summary || "",
-        solutions: p.solutions || [],
-      });
-    }
-
     if (summaries.length === 0) {
       return res.json({
         positive: [],
@@ -103,6 +82,29 @@ export const getInsights = async (req: Request, res: Response) => {
     const topTrends = getTopN(insightMap, 5);
     const topKeywords = getTopN(keywordMap, 5);
     const topKeywords50 = getTopN(keywordMap, 50);
+
+    // 최종 인사이트 리포트가 있으면, 부족한 필드만 보완한 뒤 반환
+    const latestReport = await prisma.report.findFirst({
+      where: { userId, period: "insight", ...(storeId ? { storeId } : {}) },
+      orderBy: { createdAt: "desc" },
+    });
+    if (latestReport?.payload) {
+      const p: any = latestReport.payload || {};
+      return res.json({
+        ...p,
+        keywords: p.keywords || topKeywords.slice(0, 3),
+        keywordsTop50: p.keywordsTop50 || topKeywords50.map((k) => ({ keyword: k, count: keywordMap[k] })),
+        positives: p.positives?.map((x: any) => x.title || x) || topPos,
+        negatives: p.negatives?.map((x: any) => x.title || x) || topNeg,
+        trends: p.trends || topTrends,
+        autoCategories: p.autoCategories || buildCategories(keywordMap),
+        keywordSolutions: p.keywordSolutions || topKeywords.slice(0, 5).map((k) => `${k} 관련 안내/프로모션을 강화하세요.`),
+        recentSummaries: p.recentSummaries || [],
+        description: p.shopCharacter || p.description || "",
+        insightsSummary: p.summary || "",
+        solutions: p.solutions || [],
+      });
+    }
 
     // 간단한 해설 템플릿 생성
     const summaryParts: string[] = [];

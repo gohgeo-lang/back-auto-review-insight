@@ -6,6 +6,8 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type ParsedSummary = {
   sentiment?: string;
+  sentimentDetail?: string;
+  summary?: string;
   positives: string[];
   negatives: string[];
   insights: string[];
@@ -35,6 +37,27 @@ async function createFinalInsightReport(userId: string, storeId?: string) {
     throw new Error("NO_BATCH_SUMMARIES");
   }
 
+  const summaries = await prisma.summary.findMany({
+    where: { review: { userId, ...(storeId ? { storeId } : {}) } },
+    select: {
+      sentiment: true,
+      keywords: true,
+      tags: true,
+      positives: true,
+      negatives: true,
+      summary: true,
+    },
+  });
+  const summariesFiltered = summaries.filter((s) => {
+    const hasContent =
+      (s.summary && s.summary.trim() !== "") ||
+      (s.keywords && s.keywords.length) ||
+      (s.positives && s.positives.length) ||
+      (s.negatives && s.negatives.length) ||
+      (s.tags && s.tags.length);
+    return hasContent;
+  });
+
   const sentimentStats = { pos: 0, neu: 0, neg: 0 };
   const keywordFreq: Record<string, number> = {};
   const negCategoryStats: Record<string, number> = {};
@@ -50,6 +73,15 @@ async function createFinalInsightReport(userId: string, storeId?: string) {
     });
   });
 
+  summaries.forEach((s) => {
+    if (s.sentiment === "positive") sentimentStats.pos += 1;
+    else if (s.sentiment === "neutral") sentimentStats.neu += 1;
+    else if (s.sentiment === "negative") sentimentStats.neg += 1;
+    (s.keywords || []).forEach((k) => {
+      keywordFreq[k] = (keywordFreq[k] || 0) + 1;
+    });
+  });
+
   const batchSummaries = batches
     .map(
       (b) =>
@@ -59,61 +91,63 @@ async function createFinalInsightReport(userId: string, storeId?: string) {
 
   const prompt = `
 You are an expert review insight analyst.
-아래는 리뷰를 배치 단위로 분석한 1차 결과들입니다.
-이 전체 데이터를 종합해 매장의 '핵심 인사이트 카드'를 아래 JSON 형식으로만 출력하세요.
 
-### 출력 JSON ###
-{
-  "keywords": ["string", "string", "string", "string", "string"],
-  "summary": "string", // 300자 이하, 1~2문장 종합 총평 (문장 간 자연스럽게 이어지게)
-  "positives": [
-    { "title": "string", "reason": "string" }, // reason은 1문장(300자 이하, 접속사로 부드럽게)
-    { "title": "string", "reason": "string" },
-    { "title": "string", "reason": "string" }
-  ],
-  "negatives": [
-    { "title": "string", "reason": "string" },
-    { "title": "string", "reason": "string" },
-    { "title": "string", "reason": "string" }
-  ],
-  "shopCharacter": "string",
-  "solutions": ["string", "string", "string"], // 각 1문장, 실행형 조언(300자 이하, 문장 간 연결감 있게)
-  "strengths": {
-    "keywords": ["string","string","string"], // 상위 3개
-    "comment": "string", // 강점 해설 1문장(300자 이하, 자연스러운 연결)
-    "solutions": ["string","string","string"] // 각 1문장(300자 이하, 실행형/연결감)
-  },
-  "improvements": {
-    "keywords": ["string","string","string"], // 상위 3개
-    "comment": "string", // 개선점 해설 1문장(300자 이하, 자연스러운 연결)
-    "solutions": ["string","string","string"] // 각 1문장(300자 이하, 실행형/연결감)
-  },
-  "trends": {
-    "keywords": ["string","string","string"], // 상위 3개
-    "comment": "string", // 트렌드 해설 1문장(300자 이하, 자연스러운 연결)
-    "solutions": ["string","string","string"] // 각 1문장(300자 이하, 실행형/연결감)
-  }
-}
+### 입력 데이터 ###
+- 리뷰별 summary 데이터:
+${JSON.stringify(summariesFiltered)}
 
-### 참고 데이터 ###
+- 배치 분석 결과:
+${JSON.stringify(batches)}
+
 - 전체 감성 통계:
-${JSON.stringify(sentimentStats, null, 2)}
+${JSON.stringify(sentimentStats)}
 
 - 키워드 전체 빈도:
-${JSON.stringify(keywordFreq, null, 2)}
+${JSON.stringify(keywordFreq)}
 
-- 부정 리뷰 카테고리 빈도:
-${JSON.stringify(negCategoryStats, null, 2)}
+- 부정 키워드 빈도:
+${JSON.stringify(negCategoryStats)}
 
 - 배치 요약 리스트:
 ${batchSummaries}
 
-### 작성 규칙 ###
+### 출력(JSON) ###
+{
+  "keywords": ["상위 5개"],
+  "summary": "총평 300자 이하",
+  "positives": [
+    { "title": "핵심 강점", "reason": "근거 1문장" },
+    { "title": "핵심 강점", "reason": "근거 1문장" },
+    { "title": "핵심 강점", "reason": "근거 1문장" }
+  ],
+  "negatives": [
+    { "title": "핵심 개선점", "reason": "근거 1문장" },
+    { "title": "핵심 개선점", "reason": "근거 1문장" },
+    { "title": "핵심 개선점", "reason": "근거 1문장" }
+  ],
+  "shopCharacter": "매장의 특징 분석",
+  "solutions": ["실행 가능 솔루션 3개"],
+  "strengths": {
+    "keywords": ["상위 3개"],
+    "comment": "강점 해설",
+    "solutions": ["실행 가능한 솔루션 3개"]
+  },
+  "improvements": {
+    "keywords": ["상위 3개"],
+    "comment": "개선점 해설",
+    "solutions": ["실행 가능한 솔루션 3개"]
+  },
+  "trends": {
+    "keywords": ["상위 3개"],
+    "comment": "최근 트렌드 분석",
+    "solutions": ["실행 가능한 솔루션 3개"]
+  }
+}
+
+### 규칙 ###
 - 데이터 기반으로만 작성
-- 과장 금지, 추측 금지, 없는 내용 생성 금지
-- 사장님에게 설명하듯 현실적인 톤으로 작성
-- 솔루션은 반드시 행동 가능한 형태로
-- JSON 외 다른 설명 절대 금지
+- 없는 내용 생성 금지
+- JSON 외 텍스트 금지
 `.trim();
 
   const completion = await client.chat.completions.create({
@@ -195,11 +229,19 @@ async function summarizeReviewText(reviewId: string, content: string) {
 
   const prompt = `
 다음 리뷰를 분석해 아래 JSON으로 답변하세요.
-sentiment는 "positive" | "negative" | "irrelevant" 중 하나로 선택합니다.
+sentiment는 대분류로 "positive" | "neutral" | "negative" | "irrelevant" 중 하나를 선택합니다.
+sentimentDetail은 소분류 12가지 중 하나를 선택합니다:
+- positive: joy_contentment, excitement, admiration_awe, warmth_romance, calm
+- neutral/info: boredom, confusion_awkward, neutral_info
+- negative: disappointment_sadness, anxiety_fear, anger_frustration, disgust_contempt
+- 기타/무관: irrelevant_noise
 irrelevant는 매장과 무관하거나 의미 없는 내용일 때 사용합니다.
-tags/keywords는 핵심 키워드(메뉴명 포함)를 간결히 추출합니다.
+summary는 핵심 의미를 20자 이내로 작성합니다.
+keywords는 명사 기반 3~6개, tags는 대표 태그 3개로 작성합니다.
 {
   "sentiment": "positive",
+  "sentimentDetail": "joy_contentment",
+  "summary": "...",
   "positives": ["..."],
   "negatives": ["..."],
   "insights": ["..."],
@@ -231,25 +273,55 @@ ${truncated}
     parsed = parseJsonSafe(raw);
   } catch (error) {
     console.error("GPT JSON parse error:", raw);
-    // 파싱 실패 시 AI 호출 결과를 버리고 irrevelant로 저장해 재시도 루프 방지
-    parsed = {
-      sentiment: "irrelevant",
-      positives: [],
-      negatives: [],
-      insights: [],
-      tags: [],
-      keywords: [],
-    };
+    throw new Error("INVALID_AI_RESPONSE");
   }
+
+  // 내용이 전무한 경우 저장하지 않음
+  const hasContent =
+    (parsed.summary && parsed.summary.trim() !== "") ||
+    (parsed.keywords && parsed.keywords.length) ||
+    (parsed.positives && parsed.positives.length) ||
+    (parsed.negatives && parsed.negatives.length) ||
+    (parsed.tags && parsed.tags.length);
+  if (!hasContent) {
+    throw new Error("EMPTY_AI_RESPONSE");
+  }
+
+  // 소분류 → 대분류 매핑
+  const detail = (parsed.sentimentDetail || "").toLowerCase();
+  const detailToMain = (d: string): "positive" | "negative" | "neutral" | "irrelevant" => {
+    if (["joy_contentment", "excitement", "admiration_awe", "warmth_romance", "calm"].includes(d)) return "positive";
+    if (["boredom", "confusion_awkward", "neutral_info"].includes(d)) return "neutral";
+    if (["disappointment_sadness", "anxiety_fear", "anger_frustration", "disgust_contempt"].includes(d))
+      return "negative";
+    return "irrelevant";
+  };
+  const mainSentiment = parsed.sentiment || (detail ? detailToMain(detail) : "irrelevant");
+  const tagsWithDetail = [
+    ...(parsed.tags || []),
+    ...(detail ? [`__sentDetail:${detail}`] : []),
+  ];
 
   const summary = await prisma.summary.upsert({
     where: { reviewId },
-    update: parsed,
+    update: {
+      sentiment: mainSentiment,
+      summary: parsed.summary || "",
+      positives: parsed.positives || [],
+      negatives: parsed.negatives || [],
+      insights: parsed.insights || [],
+      tags: tagsWithDetail,
+      keywords: parsed.keywords || [],
+    },
     create: {
       reviewId,
-      sentiment: parsed.sentiment || "irrelevant",
+      sentiment: mainSentiment,
+      summary: parsed.summary || "",
       keywords: parsed.keywords || [],
-      ...parsed,
+      positives: parsed.positives || [],
+      negatives: parsed.negatives || [],
+      insights: parsed.insights || [],
+      tags: tagsWithDetail,
     },
   });
 
@@ -370,32 +442,25 @@ export const generateBatchSummaries = async (req: Request, res: Response) => {
       if (pending.length === 0) break;
 
       const reviewsText = pending
-        .map((r, idx) => `${idx + 1}. ${r.content.replace(/\s+/g, " ").slice(0, 700)}`)
+        .map((r, idx) => `${idx + 1}. ${(r.content || "").trim().replace(/\s+/g, " ").slice(0, 700)}`)
         .join("\n");
 
       const prompt = `
-You are an expert review insight analyst.
-아래는 한 매장의 고객 리뷰 5~10개입니다.
-이 리뷰들을 종합해 아래 형식의 JSON으로 ONLY 결과를 출력하세요.
+당신은 리뷰 인사이트 분석가입니다.
+아래 리뷰 5~10개를 분석해 JSON만 출력하세요.
 
-### 출력 JSON 형식 ###
+### 출력(JSON) ###
 {
-  "batchSummary": "string",     // 이 배치 리뷰의 핵심 요약 (200자 이하)
-  "keywords": ["string", "string", "string"],  // 중요 키워드 3~5개
-  "positives": ["string", "string"],           // 긍정 패턴 1~3개
-  "negatives": ["string", "string"],           // 부정 패턴 1~3개
-  "sentimentCount": { "pos": number, "neu": number, "neg": number }
+  "batchSummary": "200자 이하 핵심 요약",
+  "keywords": ["중요 키워드 8~15개"],
+  "positives": ["반복되는 긍정 포인트 3개"],
+  "negatives": ["반복되는 부정 포인트 3개"],
+  "sentimentCount": { "pos": n, "neu": n, "neg": n }
 }
 
-### 작성 규칙 ###
-- 리뷰 전체에서 반복되는 패턴만 반영
-- 없는 내용은 추정하거나 만들지 말 것
-- batchSummary는 200자 이하
-- JSON 외의 설명은 절대 출력하지 말 것
-
-### 리뷰 목록 ###
+리뷰 목록:
 ${reviewsText}
-`.trim();
+    `.trim();
 
       const completion = await client.chat.completions.create({
         model: "gpt-4o-mini",
@@ -403,12 +468,35 @@ ${reviewsText}
       });
 
       const raw = completion.choices[0].message.content || "{}";
-      let parsed: any = {};
+      const parseSafe = (text: string) => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          const cleaned = text
+            .replace(/```json/gi, "")
+            .replace(/```/g, "")
+            .trim();
+          const start = cleaned.indexOf("{");
+          const end = cleaned.lastIndexOf("}");
+          if (start !== -1 && end !== -1 && end > start) {
+            return JSON.parse(cleaned.slice(start, end + 1));
+          }
+          throw new Error("PARSE_FAIL");
+        }
+      };
+
+      let parsed: any = {
+        batchSummary: "",
+        keywords: [],
+        positives: [],
+        negatives: [],
+        sentimentCount: { pos: 0, neu: 0, neg: 0 },
+      };
       try {
-        parsed = JSON.parse(raw);
+        parsed = parseSafe(raw);
       } catch (e) {
         console.error("Batch summary JSON parse error:", raw);
-        return res.status(500).json({ error: "INVALID_AI_RESPONSE" });
+        // 파싱 실패 시에도 진행을 계속하고, 최소 구조로 채워 중단되지 않도록 함
       }
 
       const created = await prisma.batchSummary.create({

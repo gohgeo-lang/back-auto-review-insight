@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { extractPlaceId } from "../utils/naverPlace";
+import { extractPlaceId, extractGooglePlaceId, extractKakaoPlaceId } from "../utils/naverPlace";
 import { prisma } from "../lib/prisma";
 import { fetchNaverReviews } from "../crawler/naver";
 import { authMiddleware } from "../middleware/authMiddleware";
@@ -19,22 +19,55 @@ router.post("/extract", (req, res) => {
     return res.status(400).json({ error: "URL_REQUIRED" });
   }
 
-  const placeId = extractPlaceId(url);
+  const isGoogle = /google\./i.test(url);
+  const isKakao = /kakao\.com/i.test(url);
 
-  if (!placeId) {
+  // Kakao 우선 (도메인 명시 시)
+  if (isKakao) {
+    const kakaoId = extractKakaoPlaceId(url);
+    if (kakaoId) return res.json({ placeId: kakaoId, provider: "kakao" });
     return res.status(400).json({ error: "INVALID_URL" });
   }
 
-  return res.json({ placeId });
+  // Google 우선 (google 도메인이면 네이버 추출을 건너뜀)
+  if (isGoogle) {
+    const googleId = extractGooglePlaceId(url);
+    if (googleId) return res.json({ placeId: googleId, provider: "google" });
+    return res.status(400).json({ error: "INVALID_URL" });
+  }
+
+  // 기본: 네이버 → 없으면 구글 시도
+  const placeId = extractPlaceId(url);
+  if (placeId) return res.json({ placeId, provider: "naver" });
+
+  const googleId = extractGooglePlaceId(url);
+  if (googleId) return res.json({ placeId: googleId, provider: "google" });
+
+  const kakaoId = extractKakaoPlaceId(url);
+  if (kakaoId) return res.json({ placeId: kakaoId, provider: "kakao" });
+
+  return res.status(400).json({ error: "INVALID_URL" });
 });
 
 // ⭐ 2) 매장 등록 (수집은 별도 호출)
 router.post("/register-store", async (req, res) => {
-  const { placeId, name, url, autoCrawlEnabled, autoReportEnabled } = req.body;
+  const {
+    placeId,
+    name,
+    url,
+    naverPlaceId,
+    googlePlaceId,
+    kakaoPlaceId,
+    naverUrl,
+    googleUrl,
+    kakaoUrl,
+    autoCrawlEnabled,
+    autoReportEnabled,
+  } = req.body;
   const userId = (req as any).user?.id;
 
   try {
-    if (!placeId) {
+    if (!placeId && !naverPlaceId && !googlePlaceId && !kakaoPlaceId) {
       return res.status(400).json({ error: "PLACE_ID_REQUIRED" });
     }
     if (!userId) {
@@ -75,14 +108,41 @@ router.post("/register-store", async (req, res) => {
       }
     }
 
+    // 이미 등록된 매장인지 확인 (같은 사용자 + 어떤 placeId라도 일치)
+    const existing = await prisma.store.findFirst({
+      where: {
+        userId,
+        OR: [
+          placeId ? { placeId } : undefined,
+          naverPlaceId ? { naverPlaceId } : undefined,
+          googlePlaceId ? { googlePlaceId } : undefined,
+          kakaoPlaceId ? { kakaoPlaceId } : undefined,
+        ].filter(Boolean) as any,
+      },
+    });
+
+    if (existing) {
+      return res.json({
+        ok: true,
+        store: existing,
+        message: "이미 등록된 매장입니다.",
+      });
+    }
+
     const store = await prisma.store.create({
       data: {
         userId,
-        placeId,
+        placeId: placeId || naverPlaceId || googlePlaceId || kakaoPlaceId,
         name: finalName,
         url,
+        naverPlaceId: naverPlaceId || placeId,
+        googlePlaceId,
+        kakaoPlaceId,
+        naverUrl: naverUrl || url,
+        googleUrl,
+        kakaoUrl,
         autoCrawlEnabled: autoCrawlEnabled !== false,
-        autoReportEnabled: autoReportEnabled !== false,
+        autoReportEnabled: autoReportEnabled === true, // 구독 시에만 활성화
       },
     });
 

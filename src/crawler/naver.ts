@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer";
+import puppeteer, { Browser, Frame } from "puppeteer";
 import { prisma } from "../lib/prisma";
 import crypto from "crypto";
 
@@ -33,7 +33,7 @@ export async function fetchNaverReviews(
   const maxReviews = options?.maxReviews ?? FREE_MAX_REVIEWS;
   const dayWindows = options?.dayWindows ?? DAY_WINDOWS;
   const latestDate = options?.since ? new Date(options.since) : null;
-  let browser: puppeteer.Browser | null = null;
+  let browser: Browser | null = null;
   const logs: string[] = [];
 
   try {
@@ -70,13 +70,13 @@ export async function fetchNaverReviews(
       timeout: 60000,
     });
 
-    let frame: puppeteer.Frame | null = null;
+    let frame: Frame | null = null;
     try {
       logs.push("⏳ iframe 로드 대기...");
       const iframeHandle = await page.waitForSelector("iframe#entryIframe", {
         timeout: 40000,
       });
-      frame = await iframeHandle?.contentFrame();
+      frame = (await iframeHandle?.contentFrame()) || null;
     } catch {
       frame = null;
     }
@@ -104,6 +104,20 @@ export async function fetchNaverReviews(
       await frame.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
     }
 
+    // 최신순 정렬 시도
+    try {
+      const sortBtn = await frame.$("a.place_btn_option");
+      if (sortBtn) {
+        const text = await frame.evaluate((el) => el.textContent || "", sortBtn);
+        if (text.includes("최신")) {
+          await sortBtn.click();
+          await frame.evaluate(() => new Promise((r) => setTimeout(r, 800)));
+        }
+      }
+    } catch {
+      // 정렬 실패해도 계속 진행
+    }
+
     // 리뷰 리스트 로드 대기 (본문 클래스 기준, 실패해도 계속 진행)
     await frame
       .waitForSelector(".pui__vn15t2", { timeout: 20000 })
@@ -115,82 +129,89 @@ export async function fetchNaverReviews(
     // 리뷰 추출
     if (frame.isDetached()) {
       console.warn("[Crawler] frame detached before evaluate");
+      logs.push("프레임이 닫혀 리뷰를 읽지 못했습니다.");
       return { count: 0, logs };
     }
 
-    const reviews = await frame.evaluate(() => {
-      const result: { content: string; author?: string; dateText?: string }[] = [];
-      const contentEls = document.querySelectorAll(".pui__vn15t2");
+    const reviews =
+      (await frame
+        .evaluate(() => {
+          const result: { content: string; author?: string; dateText?: string }[] = [];
+          const contentEls = document.querySelectorAll(".pui__vn15t2");
 
-      contentEls.forEach((el) => {
-        const content = el.textContent?.trim();
-        if (!content) return;
-        const parent = el.closest("li") || el.closest("div");
-        const authorEl =
-          parent?.querySelector("a[href*='profile']") ||
-          parent?.querySelector("[data-testid*='nick']") ||
-          parent?.querySelector("span[class*='nickname']") ||
-          parent?.querySelector("strong");
-        const author = authorEl?.textContent?.trim() || undefined;
-        const dateCandidate =
-          Array.from(
-            parent?.querySelectorAll("span, div, time") || []
-          ).map((el) => el.textContent?.trim() || "")
-          .find(
-            (t) =>
-              t.includes("방문일") ||
-              /\d{4}년/.test(t) ||
-              /\d{4}\.\d{1,2}\.\d{1,2}/.test(t) ||
-              /\d{1,2}\.\d{1,2}/.test(t)
-          ) || undefined;
-
-        result.push({ content, author, dateText: dateCandidate });
-      });
-
-      // fallback: 예전 셀렉터 기반으로라도 긁어오기
-      if (result.length === 0) {
-        const selectors = [
-          "section[aria-label*='리뷰'] ul li",
-          "ul.list_place_reviews li",
-          "li.place_section_content__item",
-          "li.place_apply_pui",
-          "li[data-testid*='review']",
-        ];
-        selectors.forEach((sel) => {
-          document.querySelectorAll(sel).forEach((li) => {
-            const content = li.textContent?.trim();
+          contentEls.forEach((el) => {
+            const content = el.textContent?.trim();
             if (!content) return;
+            const parent = el.closest("li") || el.closest("div");
             const authorEl =
-              li.querySelector("a[href*='profile']") ||
-              li.querySelector("[data-testid*='nick']") ||
-              li.querySelector("span[class*='nickname']") ||
-              li.querySelector("strong");
+              parent?.querySelector("a[href*='profile']") ||
+              parent?.querySelector("[data-testid*='nick']") ||
+              parent?.querySelector("span[class*='nickname']") ||
+              parent?.querySelector("strong");
             const author = authorEl?.textContent?.trim() || undefined;
             const dateCandidate =
-              Array.from(li.querySelectorAll("span, div, time")).map(
-                (el) => el.textContent?.trim() || ""
-              ).find(
+              Array.from(
+                parent?.querySelectorAll("span, div, time") || []
+              ).map((el) => el.textContent?.trim() || "")
+              .find(
                 (t) =>
                   t.includes("방문일") ||
                   /\d{4}년/.test(t) ||
                   /\d{4}\.\d{1,2}\.\d{1,2}/.test(t) ||
                   /\d{1,2}\.\d{1,2}/.test(t)
               ) || undefined;
+
             result.push({ content, author, dateText: dateCandidate });
           });
-        });
-      }
 
-      return result;
-    });
+          // fallback: 예전 셀렉터 기반으로라도 긁어오기
+          if (result.length === 0) {
+            const selectors = [
+              "section[aria-label*='리뷰'] ul li",
+              "ul.list_place_reviews li",
+              "li.place_section_content__item",
+              "li.place_apply_pui",
+              "li[data-testid*='review']",
+            ];
+            selectors.forEach((sel) => {
+              document.querySelectorAll(sel).forEach((li) => {
+                const content = li.textContent?.trim();
+                if (!content) return;
+                const authorEl =
+                  li.querySelector("a[href*='profile']") ||
+                  li.querySelector("[data-testid*='nick']") ||
+                  li.querySelector("span[class*='nickname']") ||
+                  li.querySelector("strong");
+                const author = authorEl?.textContent?.trim() || undefined;
+                const dateCandidate =
+                  Array.from(li.querySelectorAll("span, div, time")).map(
+                    (el) => el.textContent?.trim() || ""
+                  ).find(
+                    (t) =>
+                      t.includes("방문일") ||
+                      /\d{4}년/.test(t) ||
+                      /\d{4}\.\d{1,2}\.\d{1,2}/.test(t) ||
+                      /\d{1,2}\.\d{1,2}/.test(t)
+                  ) || undefined;
+                result.push({ content, author, dateText: dateCandidate });
+              });
+            });
+          }
+
+          return result;
+        })
+        .catch((err: any) => {
+          console.warn("[Crawler] evaluate failed:", err);
+          return [] as { content: string; author?: string; dateText?: string }[];
+        })) || [];
 
     // 날짜 파싱 및 정렬
-    const enriched = reviews.map((item) => ({
+    const enriched = reviews.map((item: any) => ({
       ...item,
       reviewDate: item.dateText ? parseReviewDate(item.dateText) : null,
     }));
     // 최신순 정렬 (날짜 없는 것은 뒤로)
-    enriched.sort((a, b) => {
+    enriched.sort((a: any, b: any) => {
       const da = a.reviewDate ? a.reviewDate.getTime() : 0;
       const db = b.reviewDate ? b.reviewDate.getTime() : 0;
       return db - da;
@@ -217,7 +238,7 @@ export async function fetchNaverReviews(
     }
 
     // 증분 필터: 기존 최신 리뷰 이후 것만 저장 (날짜가 없는 것은 저장)
-    const filtered = selected.filter((item) => {
+    const filtered = selected.filter((item: any) => {
       if (!latestDate || !item.reviewDate) return true;
       return item.reviewDate > latestDate;
     });
@@ -364,7 +385,7 @@ function parseReviewDate(text: string) {
   return null;
 }
 
-async function clickLoadMore(frame: puppeteer.Frame, maxTries: number) {
+async function clickLoadMore(frame: Frame, maxTries: number) {
   for (let i = 0; i < maxTries; i++) {
     const clicked = await frame.evaluate(() => {
       const section =
@@ -395,7 +416,7 @@ async function clickLoadMore(frame: puppeteer.Frame, maxTries: number) {
 }
 
 async function loadAllReviews(
-  frame: puppeteer.Frame,
+  frame: Frame,
   maxLoops: number,
   logs: string[],
   hardLimit: number
@@ -406,13 +427,18 @@ async function loadAllReviews(
       console.warn("[Crawler] frame detached during loadAllReviews");
       break;
     }
-    await clickLoadMore(frame, 5);
-    await frame.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await frame.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
+    try {
+      await clickLoadMore(frame, 5);
+      await frame.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await frame.evaluate(() => new Promise((r) => setTimeout(r, 1500)));
+    } catch (err) {
+      console.warn("[Crawler] scroll/loadMore failed:", err);
+      break;
+    }
 
     let count = prevCount;
     try {
-      count = await frame.$$eval(".pui__vn15t2", (els) => els.length);
+      count = await frame.$$eval(".pui__vn15t2", (els: Element[]) => els.length);
     } catch (err) {
       console.warn("[Crawler] $$eval failed, maybe navigation occurred:", err);
       break;
