@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
+import { generateSentimentNarrative } from "./aiController";
 
 export const getInsights = async (req: Request, res: Response) => {
   try {
@@ -38,12 +39,18 @@ export const getInsights = async (req: Request, res: Response) => {
     const insightMap: Record<string, number> = {};
     const tagMap: Record<string, number> = {};
     const keywordMap: Record<string, number> = {};
+    const detailMap: Record<string, number> = {};
     const recentSummaries: string[] = [];
-    const sentimentCounts = { positive: 0, negative: 0, irrelevant: 0 };
+    const sentimentCounts = { positive: 0, negative: 0, neutral: 0, irrelevant: 0 };
     for (const s of summaries) {
       const sentiment = (s as any).sentiment || "irrelevant";
-      if (sentimentCounts[sentiment as "positive" | "negative" | "irrelevant"] !== undefined) {
-        sentimentCounts[sentiment as "positive" | "negative" | "irrelevant"] += 1;
+      if (sentimentCounts[sentiment as "positive" | "negative" | "neutral" | "irrelevant"] !== undefined) {
+        sentimentCounts[sentiment as "positive" | "negative" | "neutral" | "irrelevant"] += 1;
+      }
+      const detailTag = (s.tags || []).find((t) => t.startsWith("__sentDetail:"));
+      if (detailTag) {
+        const key = detailTag.replace("__sentDetail:", "");
+        detailMap[key] = (detailMap[key] || 0) + 1;
       }
 
       s.positives.forEach((p) => {
@@ -82,6 +89,10 @@ export const getInsights = async (req: Request, res: Response) => {
     const topTrends = getTopN(insightMap, 5);
     const topKeywords = getTopN(keywordMap, 5);
     const topKeywords50 = getTopN(keywordMap, 50);
+    const topDetails = Object.entries(detailMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([label, count]) => ({ label, count }));
 
     // 최종 인사이트 리포트가 있으면, 부족한 필드만 보완한 뒤 반환
     const latestReport = await prisma.report.findFirst({
@@ -90,6 +101,15 @@ export const getInsights = async (req: Request, res: Response) => {
     });
     if (latestReport?.payload) {
       const p: any = latestReport.payload || {};
+      let narrative =
+        p.sentimentNarrative ||
+        (await generateSentimentNarrative({
+          buckets: sentimentCounts,
+          topDetails,
+          positives: topPos,
+          negatives: topNeg,
+          keywords: topKeywords,
+        }).catch(() => ""));
       return res.json({
         ...p,
         keywords: p.keywords || topKeywords.slice(0, 3),
@@ -103,6 +123,8 @@ export const getInsights = async (req: Request, res: Response) => {
         description: p.shopCharacter || p.description || "",
         insightsSummary: p.summary || "",
         solutions: p.solutions || [],
+        sentimentNarrative: narrative,
+        sentimentDetailTop: topDetails,
       });
     }
 
@@ -146,6 +168,21 @@ export const getInsights = async (req: Request, res: Response) => {
       topNeg.length > 0
         ? topNeg.slice(0, 3).map((n) => `${n} 관련 개선을 우선 검토하세요.`)
         : [];
+
+    // 감정 해설(AI) 생성: 1000자 이내
+    let sentimentNarrative = "";
+    try {
+      sentimentNarrative = await generateSentimentNarrative({
+        buckets: sentimentCounts,
+        topDetails,
+        positives: topPos,
+        negatives: topNeg,
+        keywords: topKeywords,
+      });
+    } catch (err) {
+      console.warn("Sentiment narrative generation failed:", err);
+      sentimentNarrative = "";
+    }
 
     return res.json({
       // 구버전 키
@@ -215,10 +252,12 @@ export const getInsights = async (req: Request, res: Response) => {
         counts: {
           positive: sentimentCounts.positive,
           negative: sentimentCounts.negative,
-          neutral: 0,
+          neutral: sentimentCounts.neutral,
           irrelevant: sentimentCounts.irrelevant,
         },
       },
+      sentimentNarrative,
+      sentimentDetailTop: topDetails,
     });
   } catch (err) {
     console.error("getInsights Error:", err);

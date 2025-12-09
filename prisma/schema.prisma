@@ -49,6 +49,7 @@ model Review {
   summary   Summary?
   reply     Reply?
   createdAt DateTime @default(now())
+  collectedAt DateTime @default(now())
 }
 
 model Summary {

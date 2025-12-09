@@ -5,6 +5,27 @@ export const getReviews = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
     const storeId = (req.query.storeId as string | undefined) || undefined;
+    const collectedToday = req.query.collectedToday === "true";
+    const collectedFrom = (req.query.collectedFrom as string | undefined) || undefined;
+    const collectedTo = (req.query.collectedTo as string | undefined) || undefined;
+
+    const collectedFilter: any = {};
+    if (collectedToday) {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      collectedFilter.collectedAt = { gte: start, lte: end };
+    } else if (collectedFrom || collectedTo) {
+      const gte = collectedFrom ? new Date(collectedFrom) : undefined;
+      const lte = collectedTo ? new Date(collectedTo) : undefined;
+      if ((gte && !isNaN(gte.getTime())) || (lte && !isNaN(lte.getTime()))) {
+        collectedFilter.collectedAt = {
+          ...(gte && !isNaN(gte.getTime()) ? { gte } : {}),
+          ...(lte && !isNaN(lte.getTime()) ? { lte } : {}),
+        };
+      }
+    }
 
     if (storeId) {
       const store = await prisma.store.findFirst({
@@ -15,7 +36,7 @@ export const getReviews = async (req: Request, res: Response) => {
     }
 
     const reviews = await prisma.review.findMany({
-      where: { userId, ...(storeId ? { storeId } : {}) },
+      where: { userId, ...(storeId ? { storeId } : {}), ...collectedFilter },
       select: {
         id: true,
         userId: true,
@@ -27,6 +48,7 @@ export const getReviews = async (req: Request, res: Response) => {
         summary: true,
         reply: true,
         createdAt: true,
+        collectedAt: true,
       },
       orderBy: { createdAt: "desc" },
     });

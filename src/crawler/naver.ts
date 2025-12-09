@@ -265,6 +265,7 @@ export async function fetchNaverReviews(
             platform: "Naver",
             storeId: storeId || undefined,
             createdAt: item.reviewDate ?? undefined,
+            collectedAt: existing.collectedAt ?? new Date(),
           },
         });
       } else {
@@ -277,6 +278,7 @@ export async function fetchNaverReviews(
             platform: "Naver",
             storeId: storeId || undefined,
             createdAt: item.reviewDate ?? undefined,
+            collectedAt: new Date(),
           },
         });
         newCount += 1;

@@ -23,7 +23,8 @@
     "node-cron": "^4.2.1",
     "openai": "^6.9.1",
     "prisma": "^6.19.0",
-    "puppeteer": "^24.31.0"
+    "puppeteer": "^24.31.0",
+    "swr": "^2.3.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

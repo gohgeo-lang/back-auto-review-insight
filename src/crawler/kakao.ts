@@ -97,6 +97,7 @@ export async function fetchKakaoReviews(
             platform: "Kakao",
             storeId: storeId || undefined,
             createdAt: r.date ? new Date(r.date) : undefined,
+            collectedAt: exists.collectedAt ?? new Date(),
           },
         });
       } else {
@@ -109,6 +110,7 @@ export async function fetchKakaoReviews(
             platform: "Kakao",
             rating: 0,
             createdAt: r.date ? new Date(r.date) : undefined,
+            collectedAt: new Date(),
           },
         });
         saved += 1;
