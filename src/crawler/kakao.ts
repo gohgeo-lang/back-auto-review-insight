@@ -27,7 +27,8 @@ export async function fetchKakaoReviews(
   placeId: string,
   userId: string,
   storeId?: string,
-  maxReviews = 300
+  maxReviews = 300,
+  options?: { collectedAt?: Date }
 ): Promise<CrawlResult> {
   const logs: string[] = [];
   let browser: Browser | null = null;
@@ -97,7 +98,7 @@ export async function fetchKakaoReviews(
             platform: "Kakao",
             storeId: storeId || undefined,
             createdAt: r.date ? new Date(r.date) : undefined,
-            collectedAt: exists.collectedAt ?? new Date(),
+            collectedAt: exists.collectedAt ?? options?.collectedAt ?? new Date(),
           },
         });
       } else {
@@ -110,7 +111,7 @@ export async function fetchKakaoReviews(
             platform: "Kakao",
             rating: 0,
             createdAt: r.date ? new Date(r.date) : undefined,
-            collectedAt: new Date(),
+            collectedAt: options?.collectedAt ?? new Date(),
           },
         });
         saved += 1;

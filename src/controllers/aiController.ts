@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import OpenAI from "openai";
 import { prisma } from "../lib/prisma";
+import { detailLabelKoreanMap } from "../utils/sentimentLabels";
+import { detailLabelKoreanMap } from "../utils/sentimentLabels";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -126,34 +128,27 @@ ${batchSummaries}
 ### 출력(JSON) ###
 {
   "keywords": ["상위 5개"],
-  "summary": "총평 300자 이하",
-  "positives": [
-    { "title": "핵심 강점", "reason": "근거 1문장" },
-    { "title": "핵심 강점", "reason": "근거 1문장" },
-    { "title": "핵심 강점", "reason": "근거 1문장" }
-  ],
-  "negatives": [
-    { "title": "핵심 개선점", "reason": "근거 1문장" },
-    { "title": "핵심 개선점", "reason": "근거 1문장" },
-    { "title": "핵심 개선점", "reason": "근거 1문장" }
-  ],
+  "summary": "총평 500자 이하",
+  "positives": ["핵심 강점 키워드 최대 5개"],
+  "negatives": ["핵심 개선 키워드 최대 5개"],
   "shopCharacter": "매장의 특징 분석",
   "solutions": ["실행 가능 솔루션 3개"],
   "strengths": {
-    "keywords": ["상위 3개"],
-    "comment": "강점 해설",
+    "keywords": ["상위 5개"],
+    "comment": "강점 해설 300자 이내",
     "solutions": ["실행 가능한 솔루션 3개"]
   },
   "improvements": {
-    "keywords": ["상위 3개"],
-    "comment": "개선점 해설",
+    "keywords": ["상위 5개"],
+    "comment": "개선점 해설 300자 이내",
     "solutions": ["실행 가능한 솔루션 3개"]
   },
   "trends": {
     "keywords": ["상위 3개"],
     "comment": "최근 트렌드 분석",
     "solutions": ["실행 가능한 솔루션 3개"]
-  }
+  },
+  "keywordNarrative": "키워드·카테고리 전반 해설 500~1000자"
 }
 
 ### 규칙 ###
@@ -188,7 +183,11 @@ ${batchSummaries}
   const topDetails = Object.entries(detailMap)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([label, count]) => ({ label, count }));
+    .map(([label, count]) => ({
+      label,
+      count,
+      labelKo: detailLabelKoreanMap[label] || label,
+    }));
 
   // 감정 해설 1000자 생성 후 payload에 포함
   try {
@@ -394,25 +393,29 @@ ${truncated}
 // 집계된 감정 데이터를 바탕으로 1000자 이하 해설 생성
 export async function generateSentimentNarrative(params: {
   buckets: { [key: string]: number };
-  topDetails: Array<{ label: string; count: number }>;
+  topDetails: Array<{ label: string; count: number; labelKo?: string }>;
   positives: string[];
   negatives: string[];
   keywords: string[];
 }) {
   const { buckets, topDetails, positives, negatives, keywords } = params;
+  const topDetailsKo = topDetails.map((t) => ({
+    label: t.labelKo || t.label,
+    count: t.count,
+  }));
   const template = `
-아래 감정 분포/키워드/긍정·부정 포인트를 바탕으로 1000자 이내 해설을 작성하세요.
+아래 데이터를 바탕으로 “자연스러운 한국어”로 5~7문장, 1000자 이내 감정 해설을 작성하세요.
 - 목적: 현재 수집분 리뷰의 감정 흐름을 설명하고, 주요 긍정/부정 요인을 짚어줌.
-- 분포(대분류): ${JSON.stringify(buckets)}
-- 상위 감정 소분류(라벨/건수): ${JSON.stringify(topDetails)}
+- 감정 분포(대분류): ${JSON.stringify(buckets)}
+- 상위 감정 소분류(라벨/건수): ${JSON.stringify(topDetailsKo)}
 - 긍정 포인트: ${JSON.stringify(positives)}
 - 부정 포인트: ${JSON.stringify(negatives)}
 - 주요 키워드: ${JSON.stringify(keywords)}
 작성 가이드:
+- 한국어로만 작성.
 - 지나친 포장 없이 사실 기반으로 설명.
 - 긍정/부정을 균형 있게 언급.
 - 감정 흐름(증가/감소) 추정은 금지. 데이터에 없는 트렌드 가정 금지.
-- 5~7문장, 1000자 이내.
 `;
 
   const completion = await client.chat.completions.create({

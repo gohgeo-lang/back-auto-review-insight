@@ -72,6 +72,7 @@ router.post("/naver", async (req, res) => {
     const baseLimit = 300; // 정기 구독과 무관하게 수동 스캔은 고정 300개
     const allowedMax = baseLimit;
     const dayWindows = [30, 90, 180, 365, 0];
+    const collectedAt = new Date(); // 수집 시작 시각 고정
 
     // ⭐ 크롤러 실행 (재시도 포함, DB 저장까지 처리)
     const maxAttempts = 3;
@@ -83,6 +84,7 @@ router.post("/naver", async (req, res) => {
           maxReviews: allowedMax,
           dayWindows,
           since: store?.lastCrawledAt ?? null,
+          collectedAt,
         });
         break;
       } catch (err) {
@@ -184,6 +186,7 @@ router.post("/google", async (req, res) => {
 
     const result = await fetchGoogleReviews(targetPlaceId, userId, targetStoreId, {
       maxReviews: 300,
+      collectedAt: new Date(), // 수집 시작 시각 고정
     });
 
     if (targetStoreId) {
@@ -265,7 +268,9 @@ router.post("/kakao", async (req, res) => {
       });
     }
 
-    const result = await fetchKakaoReviews(targetPlaceId, userId, targetStoreId, 300);
+    const result = await fetchKakaoReviews(targetPlaceId, userId, targetStoreId, 300, {
+      collectedAt: new Date(), // 수집 시작 시각 고정
+    });
 
     if (targetStoreId) {
       await prisma.store.update({

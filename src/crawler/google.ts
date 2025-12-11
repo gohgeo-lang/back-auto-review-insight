@@ -12,6 +12,7 @@ type CrawlOptions = {
   maxReviews?: number;
   headless?: boolean;
   keepOpen?: boolean;
+  collectedAt?: Date;
 };
 
 const DEFAULT_MAX = 300;
@@ -275,7 +276,7 @@ async function clickMoreButton(page: Page) {
             platform: "Google",
             storeId: storeId || undefined,
             createdAt: parseRelativeDate(r.dateText) ?? undefined,
-            collectedAt: existing.collectedAt ?? new Date(),
+            collectedAt: existing.collectedAt ?? options?.collectedAt ?? new Date(),
           },
         });
       } else {
@@ -288,7 +289,7 @@ async function clickMoreButton(page: Page) {
             rating: r.rating || 0,
             platform: "Google",
             createdAt: parseRelativeDate(r.dateText) ?? undefined,
-            collectedAt: new Date(),
+            collectedAt: options?.collectedAt ?? new Date(),
           },
         });
         saved += 1;

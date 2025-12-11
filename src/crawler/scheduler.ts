@@ -40,10 +40,12 @@ cron.schedule("0 3 * * *", async () => {
         const dayWindows = isSubActive ? [180, 365, 0] : [30, 90, 180, 365, 0];
 
         console.log(`➡️ [Scheduler] 매장 ${store.id} 수집 시작`);
+        const crawlStartedAt = new Date();
         const result = await fetchNaverReviews(store.placeId, user.id, store.id, {
           maxReviews: allowedMax,
           dayWindows,
           since: store.lastCrawledAt ?? null,
+          collectedAt: crawlStartedAt,
         });
 
         // 마지막 수집 시각 업데이트
@@ -60,18 +62,31 @@ cron.schedule("0 3 * * *", async () => {
             { period: "quarterly", rangeDays: 90 },
             { period: "yearly", rangeDays: 365 },
           ] as const;
+
+          const now = new Date();
+
           for (const p of periods) {
             try {
-              const payload = await generateReportPayload(user.id, store.id, p.rangeDays);
-              await prisma.report.create({
-                data: {
-                  userId: user.id,
-                  storeId: store.id,
-                  period: p.period,
-                  rangeDays: p.rangeDays,
-                  payload,
-                },
+              // 최근 생성된 동일 period 리포트가 있으면 건너뜀
+              const latest = await prisma.report.findFirst({
+                where: { userId: user.id, storeId: store.id, period: p.period },
+                orderBy: { createdAt: "desc" },
               });
+              const hasRecent =
+                latest && now.getTime() - latest.createdAt.getTime() < p.rangeDays * 24 * 3600 * 1000;
+
+              if (!hasRecent) {
+                const payload = await generateReportPayload(user.id, store.id, p.rangeDays);
+                await prisma.report.create({
+                  data: {
+                    userId: user.id,
+                    storeId: store.id,
+                    period: p.period,
+                    rangeDays: p.rangeDays,
+                    payload,
+                  },
+                });
+              }
             } catch (err) {
               console.error(`[Scheduler] 리포트 생성 실패 (${p.period}):`, err);
             }

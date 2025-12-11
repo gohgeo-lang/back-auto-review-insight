@@ -17,6 +17,7 @@ type CrawlOptions = {
   maxReviews?: number;
   dayWindows?: number[];
   since?: Date | null; // 증분 기준
+  collectedAt?: Date; // 수집 시작 시각
 };
 
 /**
@@ -265,7 +266,7 @@ export async function fetchNaverReviews(
             platform: "Naver",
             storeId: storeId || undefined,
             createdAt: item.reviewDate ?? undefined,
-            collectedAt: existing.collectedAt ?? new Date(),
+            collectedAt: existing.collectedAt ?? options?.collectedAt ?? new Date(),
           },
         });
       } else {
@@ -278,7 +279,7 @@ export async function fetchNaverReviews(
             platform: "Naver",
             storeId: storeId || undefined,
             createdAt: item.reviewDate ?? undefined,
-            collectedAt: new Date(),
+            collectedAt: options?.collectedAt ?? new Date(),
           },
         });
         newCount += 1;
