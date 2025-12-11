@@ -53,9 +53,9 @@ router.post("/naver", async (req, res) => {
       }
     }
 
-    // 토큰 차감/구독 여부 검사 (기본 10개 필요) - 여러 플랫폼 연속 수집 시 skipCharge로 제어
+    // 이용권 차감/구독 여부 검사 - 여러 플랫폼 연속 수집 시 skipCharge로 제어
     if (!skipCharge) {
-      const cost = 1; // 이용권 1회 차감
+      const cost = 1; // 이용권 1개 차감
       const tokens = user.extraCredits || 0;
       if (tokens < cost) {
         return res.status(402).json({
@@ -168,9 +168,9 @@ router.post("/google", async (req, res) => {
       }
     }
 
-    // 토큰 차감 (수동 스캔 10개) - 여러 플랫폼 연속 수집 시 skipCharge로 제어
+    // 이용권 차감 - 여러 플랫폼 연속 수집 시 skipCharge로 제어
     if (!skipCharge) {
-      const cost = 1; // 이용권 1회 차감
+      const cost = 1; // 이용권 1개 차감
       const tokens = user.extraCredits || 0;
       if (tokens < cost) {
         return res.status(402).json({

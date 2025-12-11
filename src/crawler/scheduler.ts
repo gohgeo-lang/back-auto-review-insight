@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { prisma } from "../lib/prisma";
 import { fetchNaverReviews } from "./naver";
-import { generateReportPayload } from "../services/reportService";
+import { generatePeriodicReportPayload } from "../services/periodicReportService";
 
 // 매일 새벽 3시(서버 시간 기준) 실행
 cron.schedule("0 3 * * *", async () => {
@@ -76,7 +76,11 @@ cron.schedule("0 3 * * *", async () => {
                 latest && now.getTime() - latest.createdAt.getTime() < p.rangeDays * 24 * 3600 * 1000;
 
               if (!hasRecent) {
-                const payload = await generateReportPayload(user.id, store.id, p.rangeDays);
+                const payload = await generatePeriodicReportPayload(
+                  p.period,
+                  user.id,
+                  store.id
+                );
                 await prisma.report.create({
                   data: {
                     userId: user.id,

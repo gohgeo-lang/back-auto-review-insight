@@ -24,13 +24,13 @@ export const generateReport = async (req: Request, res: Response) => {
       if (!own) return res.status(404).json({ error: "STORE_NOT_FOUND" });
     }
 
-    // 수동 리포트 생성은 구독 여부와 무관하게 항상 토큰 10개 차감
-    const costPerReport = 10;
+    // 수동 리포트 생성은 구독 여부와 무관하게 이용권 1개 차감
+    const costPerReport = 1;
     const tokens = user.extraCredits || 0;
     if (tokens < costPerReport) {
       return res.status(402).json({
         error: "TOKEN_REQUIRED",
-        message: "토큰이 부족합니다. 충전 후 이용해주세요.",
+        message: "이용권이 부족합니다. 충전 후 이용해주세요.",
       });
     }
     await prisma.user.update({

@@ -47,7 +47,7 @@ router.post("/credits", async (req, res) => {
   return res.json({ ok: true, extraCredits: updated.extraCredits });
 });
 
-// 광고 시청 보상: 기본 1토큰 적립 (watchOnly=true면 보상 없음)
+// 광고 시청 보상: 기본 1 이용권 적립 (watchOnly=true면 보상 없음)
 router.post("/ad-reward", async (req, res) => {
   const userId = (req as any).user?.id;
   if (!userId) return res.status(401).json({ error: "UNAUTHORIZED" });
@@ -70,7 +70,7 @@ router.post("/ad-reward", async (req, res) => {
   if (!allowExtra && alreadyClaimed) {
     return res.status(429).json({
       error: "DAILY_LIMIT",
-      message: "무료 토큰은 하루 1회만 수령할 수 있습니다. 광고 시 추가 1회를 사용할 수 있습니다.",
+      message: "무료 이용권은 하루 1회만 수령할 수 있습니다. 광고 시 추가 1회를 사용할 수 있습니다.",
       resetAt: resetUtc
     });
   }

@@ -21,7 +21,7 @@ export const signup = async (req: Request, res: Response) => {
         nickname,
         gender,
         address,
-        extraCredits: 10, // 가입 시 기본 10토큰 지급 (인사이트 1회 사용량)
+        extraCredits: 10, // 가입 시 기본 10 이용권 지급 (인사이트 1회 사용량)
       },
     });
 
